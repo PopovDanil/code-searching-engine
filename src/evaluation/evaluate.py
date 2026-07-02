@@ -138,7 +138,7 @@ def evaluate_on_codesearchnet(
         )
 
         # Embed corpus entities
-        texts = [e.to_structured_text() for e in corpus_entities]
+        texts = [e.to_structured_text(include_docstring=config.include_docstring) for e in corpus_entities]
         embeddings = embedder.embed_documents(texts)
 
         from indexing.faiss_index import FaissCodeIndex

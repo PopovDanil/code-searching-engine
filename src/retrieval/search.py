@@ -124,6 +124,7 @@ class SearchEngine:
                 batch_size=self._config.batch_size,
                 enabled=self._config.enable_reranking,
                 torch_dtype=self._config.get_torch_dtype(),
+                include_docstring=self._config.include_docstring,
             )
         return self._reranker
 

@@ -58,6 +58,9 @@ class CodeSearchConfig:
     # ── Reranker toggle ─────────────────────────────────────────────────
     enable_reranking: bool = True
 
+    # ── Docstring inclusion in structured text ──────────────────────────
+    include_docstring: bool = True
+
     # ── Embedding instruction (for Qwen3-Embedding) ────────────────────
     query_instruction: str = "Retrieve relevant source code based on the user query"
 

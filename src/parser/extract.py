@@ -44,7 +44,7 @@ class CodeEntity:
             parts.append(self.function_name)
         return ".".join(parts) if parts else "<anonymous>"
 
-    def to_structured_text(self) -> str:
+    def to_structured_text(self, include_docstring: bool = True) -> str:
         """Build the structured text representation used for embedding.
 
         Format::
@@ -57,7 +57,8 @@ class CodeEntity:
             def read_json(path):
                 ...
 
-        The Documentation section is omitted when no docstring is available.
+        The Documentation section is omitted when no docstring is available
+        or when *include_docstring* is ``False``.
         """
         lines: List[str] = [f"Language: {self.language.capitalize()}"]
 
@@ -72,7 +73,7 @@ class CodeEntity:
 
         lines.append(f"Signature: {self.signature}")
 
-        if self.docstring:
+        if include_docstring and self.docstring:
             # Collapse to single line for the header, preserve full text below
             lines.append(f"Documentation: {self.docstring.strip()}")
 

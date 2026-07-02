@@ -64,6 +64,7 @@ class Qwen3Reranker(BaseReranker):
         max_seq_length: int = 2048,
         batch_size: int = 16,
         torch_dtype: Optional[torch.dtype] = None,
+        include_docstring: bool = True,
     ) -> None:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -73,6 +74,7 @@ class Qwen3Reranker(BaseReranker):
         self._device = torch.device(device)
         self._max_seq_length = max_seq_length
         self._batch_size = batch_size
+        self._include_docstring = include_docstring
 
         dtype = torch_dtype or (torch.float16 if self._device.type == "cuda" else torch.float32)
 
@@ -145,7 +147,7 @@ class Qwen3Reranker(BaseReranker):
         for start in range(0, len(candidates), bs):
             batch = candidates[start : start + bs]
             prompts = [
-                self._format_prompt(query, ent.to_structured_text())
+                self._format_prompt(query, ent.to_structured_text(include_docstring=self._include_docstring))
                 for ent, _ in batch
             ]
             scores = self._score_batch(prompts)
@@ -179,6 +181,7 @@ def create_reranker(
     batch_size: int = 16,
     enabled: bool = True,
     torch_dtype: Optional[torch.dtype] = None,
+    include_docstring: bool = True,
 ) -> BaseReranker:
     """Instantiate the correct reranker based on *model_name*."""
     if not enabled:
@@ -192,6 +195,7 @@ def create_reranker(
             max_seq_length=max_seq_length,
             batch_size=batch_size,
             torch_dtype=torch_dtype,
+            include_docstring=include_docstring,
         )
 
     # Fallback: use Qwen3-Reranker for any unrecognised name
@@ -202,4 +206,5 @@ def create_reranker(
         max_seq_length=max_seq_length,
         batch_size=batch_size,
         torch_dtype=torch_dtype,
+        include_docstring=include_docstring,
     )

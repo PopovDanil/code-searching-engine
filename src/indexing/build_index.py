@@ -126,7 +126,7 @@ def build_index(
         raise ValueError("No code entities were extracted from the repository.")
 
     # 3. Build structured texts ----------------------------------------------
-    texts = [entity.to_structured_text() for entity in all_entities]
+    texts = [entity.to_structured_text(include_docstring=config.include_docstring) for entity in all_entities]
 
     # 4. Initialise embedder if needed ---------------------------------------
     if embedder is None:
