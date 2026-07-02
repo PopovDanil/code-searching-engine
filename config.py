@@ -1,0 +1,92 @@
+"""Global configuration for the codesearch system."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict
+
+
+def _auto_device() -> str:
+    """Select CUDA if available, otherwise CPU."""
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        return "cpu"
+
+
+@dataclass
+class CodeSearchConfig:
+    """Configuration for the semantic code search pipeline.
+
+    All weights and model names are configurable so the system can be
+    adapted without modifying source code.
+    """
+
+    # ── Models ──────────────────────────────────────────────────────────
+    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
+    reranker_model: str = "Qwen/Qwen3-Reranker-0.6B"
+
+    # ── Processing ──────────────────────────────────────────────────────
+    batch_size: int = 16
+    max_seq_length: int = 512
+    num_parser_workers: int = 4
+
+    # ── Retrieval ───────────────────────────────────────────────────────
+    top_k: int = 10
+    retrieval_top_k: int = 100  # candidates fetched before reranking
+
+    # ── Index ───────────────────────────────────────────────────────────
+    index_type: str = "flat"  # "flat" | "hnsw"
+    index_dir: str = "index"
+    hnsw_m: int = 32
+    hnsw_ef_construction: int = 200
+    hnsw_ef_search: int = 64
+
+    # ── Device ──────────────────────────────────────────────────────────
+    device: str = field(default_factory=_auto_device)
+
+    # ── Scoring weights ─────────────────────────────────────────────────
+    weights: Dict[str, float] = field(
+        default_factory=lambda: {
+            "reranker": 0.75,
+            "embedding": 0.20,
+            "metadata": 0.05,
+        }
+    )
+
+    # ── Reranker toggle ─────────────────────────────────────────────────
+    enable_reranking: bool = True
+
+    # ── Embedding instruction (for Qwen3-Embedding) ────────────────────
+    query_instruction: str = "Retrieve relevant source code based on the user query"
+
+    # ── Persistence ─────────────────────────────────────────────────────
+    embedding_dtype: str = "float16"  # "float16" | "float32" | "bfloat16"
+
+    # -------------------------------------------------------------------
+    @classmethod
+    def from_yaml(cls, path: str) -> "CodeSearchConfig":
+        """Load configuration from a YAML file.
+
+        Missing keys fall back to class defaults.
+        """
+        import yaml
+
+        with open(path, "r", encoding="utf-8") as fh:
+            data = yaml.safe_load(fh) or {}
+
+        # Only pass keys that the dataclass actually accepts
+        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered = {k: v for k, v in data.items() if k in valid_fields}
+        return cls(**filtered)
+
+    def get_torch_dtype(self):
+        """Return the torch dtype matching ``embedding_dtype``."""
+        import torch
+
+        return {
+            "float16": torch.float16,
+            "float32": torch.float32,
+            "bfloat16": torch.bfloat16,
+        }.get(self.embedding_dtype, torch.float16)

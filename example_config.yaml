@@ -1,0 +1,40 @@
+# codesearch example configuration
+# Override any default by uncommenting and editing below.
+
+# ── Models ──────────────────────────────────────────────────────────
+embedding_model: "Qwen/Qwen3-Embedding-0.6B"
+reranker_model: "Qwen/Qwen3-Reranker-0.6B"
+
+# ── Processing ──────────────────────────────────────────────────────
+batch_size: 16
+max_seq_length: 512
+num_parser_workers: 4
+
+# ── Retrieval ───────────────────────────────────────────────────────
+top_k: 10
+retrieval_top_k: 100
+
+# ── Index ───────────────────────────────────────────────────────────
+index_type: "flat"      # "flat" or "hnsw"
+index_dir: "index"
+hnsw_m: 32
+hnsw_ef_construction: 200
+hnsw_ef_search: 64
+
+# ── Device ──────────────────────────────────────────────────────────
+device: "auto"          # "auto", "cpu", "cuda"
+
+# ── Scoring weights ─────────────────────────────────────────────────
+weights:
+  reranker: 0.75
+  embedding: 0.20
+  metadata: 0.05
+
+# ── Reranker ────────────────────────────────────────────────────────
+enable_reranking: true
+
+# ── Embedding instruction ───────────────────────────────────────────
+query_instruction: "Retrieve relevant source code based on the user query"
+
+# ── Precision ───────────────────────────────────────────────────────
+embedding_dtype: "float16"   # "float16" | "float32" | "bfloat16"
