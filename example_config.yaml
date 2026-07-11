@@ -19,12 +19,17 @@ retrieval_top_k: 100
 # ── Index ───────────────────────────────────────────────────────────
 index_type: "flat"      # "flat" or "hnsw"
 index_dir: "index"
+separate_indexes: false  # build a separate index per language
 hnsw_m: 32
 hnsw_ef_construction: 200
 hnsw_ef_search: 64
 
 # ── Device ──────────────────────────────────────────────────────────
 device: "auto"          # "auto", "cpu", "cuda"
+
+# ── Dataset / Evaluation ────────────────────────────────────────────
+max_dataset_records: null  # total records across all languages to load into DB (null = all)
+                           # cached to {index_dir}/eval_cache/ after first run
 
 # ── Scoring weights ─────────────────────────────────────────────────
 weights:

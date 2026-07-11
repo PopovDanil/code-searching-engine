@@ -36,11 +36,15 @@ class CodeSearchConfig:
 
     # ── Retrieval ───────────────────────────────────────────────────────
     top_k: int = 10
-    retrieval_top_k: int = 100  # candidates fetched before reranking
+    retrieval_top_k: int = 50  # candidates fetched before reranking
+
+    # ── Dataset / Evaluation ────────────────────────────────────────────
+    max_dataset_records: Optional[int] = None  # total records across all languages to load into the database (None = all)
 
     # ── Index ───────────────────────────────────────────────────────────
     index_type: str = "flat"  # "flat" | "hnsw"
     index_dir: str = "index"
+    separate_indexes: bool = False  # build a separate index per language
     hnsw_m: int = 32
     hnsw_ef_construction: int = 200
     hnsw_ef_search: int = 64

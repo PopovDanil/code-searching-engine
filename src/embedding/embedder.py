@@ -104,6 +104,12 @@ class Qwen3Embedder(BaseEmbedder):
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
+        if device == "cpu" and torch.cuda.is_available():
+            logger.warning(
+                "CUDA is available but embedder is on CPU — embedding will be slow. "
+                "Set device='cuda' or device='auto' in your config."
+            )
+
         self._device = torch.device(device)
         self._max_seq_length = max_seq_length
         self._batch_size = batch_size

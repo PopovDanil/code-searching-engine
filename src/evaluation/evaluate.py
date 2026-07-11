@@ -7,10 +7,14 @@ appears in the top-K results.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
+import pickle
 import re
 from dataclasses import replace
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from tqdm import tqdm
@@ -199,12 +203,90 @@ def _find_parent_rank(
     return math.inf
 
 
+# ── Evaluation cache ───────────────────────────────────────────────────
+
+def _cache_key(
+    max_dataset_records: Optional[int],
+    embedding_model: str,
+    split: str,
+) -> str:
+    """Return a deterministic cache key for the given parameters."""
+    raw = f"{max_dataset_records}|{embedding_model}|{split}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _eval_cache_dir(config: CodeSearchConfig, lang: str) -> Path:
+    """Return the cache directory for a language's evaluation index."""
+    return Path(config.index_dir) / "eval_cache" / lang
+
+
+def _save_eval_cache(
+    cache_dir: Path,
+    key: str,
+    faiss_index,  # FaissCodeIndex
+    entity_parent_ids: List[int],
+    all_queries: List[Tuple[str, int]],
+) -> None:
+    """Persist evaluation state to disk."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    faiss_index.save(str(cache_dir))
+    with open(cache_dir / "eval_state.pkl", "wb") as fh:
+        pickle.dump(
+            {"entity_parent_ids": entity_parent_ids, "all_queries": all_queries},
+            fh,
+            protocol=pickle.HIGHEST_PROTOCOL,
+        )
+    with open(cache_dir / "cache_key.json", "w") as fh:
+        json.dump({"key": key}, fh)
+    logger.info("Saved evaluation cache to %s", cache_dir)
+
+
+def _load_eval_cache(
+    cache_dir: Path,
+    key: str,
+):
+    """Load evaluation state from disk if the cache key matches.
+
+    Returns ``(faiss_index, entity_parent_ids, all_queries)`` or
+    ``None`` if the cache is missing or stale.
+    """
+    key_path = cache_dir / "cache_key.json"
+    index_path = cache_dir / "index.faiss"
+    state_path = cache_dir / "eval_state.pkl"
+
+    if not all([key_path.exists(), index_path.exists(), state_path.exists()]):
+        return None
+
+    with open(key_path) as fh:
+        stored = json.load(fh)
+    if stored.get("key") != key:
+        logger.info("Cache key mismatch in %s - rebuilding", cache_dir)
+        return None
+
+    from indexing.faiss_index import FaissCodeIndex
+    faiss_index = FaissCodeIndex.load(str(cache_dir))
+    with open(state_path, "rb") as fh:
+        state = pickle.load(fh)
+
+    logger.info("Loaded evaluation cache from %s (%d vectors)", cache_dir, faiss_index.ntotal)
+    return faiss_index, state["entity_parent_ids"], state["all_queries"]
+
+
+def _build_entity_to_parent(
+    metadata: List[CodeEntity],
+    entity_parent_ids: List[int],
+) -> Dict[int, int]:
+    """Rebuild ``entity_to_parent`` mapping from loaded metadata."""
+    return {id(entity): entity_parent_ids[i] for i, entity in enumerate(metadata)}
+
+
 # ── Public evaluation API ───────────────────────────────────────────────
 
 def evaluate_on_codesearchnet(
     config: CodeSearchConfig,
     languages: Optional[List[str]] = None,
     max_queries: Optional[int] = None,
+    max_dataset_records: Optional[int] = None,
     split: str = "test",
 ) -> Dict[str, Dict[str, float]]:
     """Evaluate the search system on CodeSearchNet.
@@ -216,17 +298,25 @@ def evaluate_on_codesearchnet(
     languages:
         Subset of languages to evaluate.  ``None`` means all six.
     max_queries:
-        Cap on the number of queries per language (useful for fast
-        iteration).  ``None`` means no cap.
+        Cap on the number of evaluation queries per language (useful
+        for fast iteration).  ``None`` means use all loaded examples.
+    max_dataset_records:
+        Total number of records to load across all languages.
+        Divided evenly among target languages.  ``None`` means load
+        all records.
     split:
         Dataset split to use (``"test"`` or ``"validation"``).
 
     Returns
     -------
     Dict[str, Dict[str, float]]
-        Mapping ``language → {metric_name: value}``.
+        Mapping ``language -> {metric_name: value}`` plus an ``"overall"``
+        key with aggregate metrics across all languages.
     """
     from datasets import load_dataset
+
+    from embedding.embedder import create_embedder
+    from indexing.faiss_index import FaissCodeIndex
     from retrieval.search import SearchEngine
 
     target_langs = languages or [
@@ -239,9 +329,55 @@ def evaluate_on_codesearchnet(
     ]
     all_results: Dict[str, Dict[str, float]] = {}
     evaluation_config = replace(config, include_docstring=False)
+    separate = config.separate_indexes
+
+    # Divide total records evenly across languages
+    num_langs = len(target_langs)
+    if max_dataset_records is not None:
+        per_lang_base = max_dataset_records // num_langs
+        remainder = max_dataset_records % num_langs
+        per_lang_limits = {
+            lang: per_lang_base + (1 if i < remainder else 0)
+            for i, lang in enumerate(target_langs)
+        }
+    else:
+        per_lang_limits = {lang: None for lang in target_langs}
+
+    cache_key = _cache_key(max_dataset_records, config.embedding_model, split)
+
+    # ── Create embedder once ───────────────────────────────────────
+    embedder = create_embedder(
+        model_name=config.embedding_model,
+        device=config.device,
+        max_seq_length=config.max_seq_length,
+        batch_size=config.batch_size,
+        query_instruction=config.query_instruction,
+        torch_dtype=config.get_torch_dtype(),
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 1: Load corpora for all target languages
+    # ═══════════════════════════════════════════════════════════════
+    # per_lang_data[lang] = (corpus_entities, entity_to_parent, all_queries)
+    per_lang_data: Dict[str, Tuple[List[CodeEntity], Dict[int, int], List[Tuple[str, int]]]] = {}
 
     for lang in target_langs:
-        logger.info("Evaluating on CodeSearchNet / %s", lang)
+        logger.info("Loading CodeSearchNet / %s", lang)
+        per_lang_limit = per_lang_limits[lang]
+
+        # ── Try loading from cache (separate mode only) ────────────
+        if separate:
+            cache_dir = _eval_cache_dir(config, lang)
+            cached = _load_eval_cache(cache_dir, cache_key)
+            if cached is not None:
+                faiss_index, entity_parent_ids, all_queries = cached
+                entity_to_parent = _build_entity_to_parent(
+                    faiss_index.metadata, entity_parent_ids,
+                )
+                per_lang_data[lang] = ([], entity_to_parent, all_queries)
+                continue
+
+        # ── Load dataset ──────────────────────────────────────────
         try:
             ds = load_dataset(
                 "code-search-net/code_search_net",
@@ -250,82 +386,159 @@ def evaluate_on_codesearchnet(
                 trust_remote_code=True,
             )
         except Exception:
-            logger.exception("Failed to load CodeSearchNet for %s — skipping", lang)
+            logger.exception("Failed to load CodeSearchNet for %s - skipping", lang)
             continue
 
-        # Build a chunked corpus while retaining parent-level relevance.
         corpus_entities: List[CodeEntity] = []
         entity_to_parent: Dict[int, int] = {}
-        query_to_relevant: Dict[int, int] = {}
-        queries: List[str] = []
+        all_queries: List[Tuple[str, int]] = []
 
-        limit = max_queries if max_queries is not None else len(ds)
-        progress = tqdm(ds, desc=f"Loading {lang}", total=min(limit, len(ds)))
-        for i, example in enumerate(progress):
-            if i >= limit:
+        corpus_limit = per_lang_limit if per_lang_limit is not None else len(ds)
+        load_progress = tqdm(ds, desc=f"Loading {lang}", total=min(corpus_limit, len(ds)))
+        for i, example in enumerate(load_progress):
+            if i >= corpus_limit:
                 break
 
             query, chunks = _prepare_evaluation_example(example, lang, config)
             if not chunks:
                 continue
 
-            parent_id = len(queries)
+            parent_id = len(all_queries)
             corpus_entities.extend(chunks)
             for chunk in chunks:
                 entity_to_parent[id(chunk)] = parent_id
-            query_idx = len(queries)
-            queries.append(query)
-            query_to_relevant[query_idx] = parent_id
+            all_queries.append((query, parent_id))
 
-        if not queries:
-            logger.warning("No valid examples for %s — skipping", lang)
+        if not all_queries:
+            logger.warning("No valid examples for %s - skipping", lang)
             continue
 
-        # Index the corpus
-        from embedding.embedder import create_embedder
-
-        embedder = create_embedder(
-            model_name=config.embedding_model,
-            device=config.device,
-            max_seq_length=config.max_seq_length,
-            batch_size=config.batch_size,
-            query_instruction=config.query_instruction,
-            torch_dtype=config.get_torch_dtype(),
+        logger.info(
+            "Loaded %d records (%d chunks) for %s",
+            len(all_queries), len(corpus_entities), lang,
         )
+        per_lang_data[lang] = (corpus_entities, entity_to_parent, all_queries)
 
-        # Embed corpus entities
+    if not per_lang_data:
+        logger.error("No languages loaded successfully - nothing to evaluate")
+        return all_results
+
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 2: Build index(es) based on separate_indexes config
+    # ═══════════════════════════════════════════════════════════════
+    if separate:
+        # ── Build separate per-language indexes ────────────────────
+        lang_indexes: Dict[str, FaissCodeIndex] = {}
+        for lang, (corpus_entities, entity_to_parent, all_queries) in per_lang_data.items():
+            if not corpus_entities:
+                # Loaded from cache — skip rebuild
+                continue
+
+            texts = [
+                entity.to_structured_text(include_docstring=False)
+                for entity in corpus_entities
+            ]
+            embeddings = embedder.embed_documents(texts)
+
+            faiss_index = FaissCodeIndex(
+                dimension=embeddings.shape[1],
+                index_type=config.index_type,
+            )
+            faiss_index.build(embeddings, corpus_entities)
+            lang_indexes[lang] = faiss_index
+
+            # Save cache
+            cache_dir = _eval_cache_dir(config, lang)
+            entity_parent_ids = [entity_to_parent[id(e)] for e in corpus_entities]
+            _save_eval_cache(cache_dir, cache_key, faiss_index, entity_parent_ids, all_queries)
+    else:
+        # ── Build a single combined index for all languages ────────
+        combined_entities: List[CodeEntity] = []
+        combined_entity_to_parent: Dict[int, int] = {}
+        combined_queries: List[Tuple[str, int]] = []
+
+        for lang, (corpus_entities, entity_to_parent, all_queries) in per_lang_data.items():
+            parent_offset = len(combined_queries)
+            combined_queries.extend(all_queries)
+            combined_entities.extend(corpus_entities)
+            for entity in corpus_entities:
+                parent_id = entity_to_parent[id(entity)]
+                combined_entity_to_parent[id(entity)] = parent_id + parent_offset
+
         texts = [
             entity.to_structured_text(include_docstring=False)
-            for entity in corpus_entities
+            for entity in combined_entities
         ]
         embeddings = embedder.embed_documents(texts)
 
-        from indexing.faiss_index import FaissCodeIndex
-        faiss_index = FaissCodeIndex(
+        combined_index = FaissCodeIndex(
             dimension=embeddings.shape[1],
-            index_type="flat",
+            index_type=config.index_type,
         )
-        faiss_index.build(embeddings, corpus_entities)
+        combined_index.build(embeddings, combined_entities)
 
-        # Create search engine with the pre-built index
-        engine = SearchEngine(
-            config=evaluation_config,
-            embedder=embedder,
-            index=faiss_index,
-        )
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 3: Run queries and compute metrics
+    # ═══════════════════════════════════════════════════════════════
+    all_ranks: Dict[str, List[float]] = {lang: [] for lang in per_lang_data}
 
-        # Evaluate
-        ranks: List[float] = []
-        for qi, query in enumerate(tqdm(queries, desc=f"Searching {lang}")):
-            results = engine.search(query, top_k=config.retrieval_top_k)
-            rank = _find_parent_rank(
-                results,
-                entity_to_parent,
-                query_to_relevant[qi],
-                top_k=10,
+    if separate:
+        for lang, (_, entity_to_parent, all_queries) in per_lang_data.items():
+            faiss_idx = lang_indexes.get(lang)
+            if faiss_idx is None:
+                # Must be from cache — load it
+                cache_dir = _eval_cache_dir(config, lang)
+                cached = _load_eval_cache(cache_dir, cache_key)
+                if cached is None:
+                    continue
+                faiss_idx, _, _ = cached
+
+            query_limit = max_queries if max_queries is not None else len(all_queries)
+            query_limit = min(query_limit, len(all_queries))
+            selected_queries = all_queries[:query_limit]
+
+            logger.info(
+                "Evaluating %d queries out of %d loaded records for %s",
+                query_limit, len(all_queries), lang,
             )
-            ranks.append(rank)
 
+            engine = SearchEngine(config=evaluation_config, index=faiss_idx)
+
+            for qi, (query, relevant_parent) in enumerate(
+                tqdm(selected_queries, desc=f"Searching {lang}")
+            ):
+                results = engine.search(query, top_k=config.retrieval_top_k)
+                rank = _find_parent_rank(
+                    results, entity_to_parent, relevant_parent, top_k=10,
+                )
+                all_ranks[lang].append(rank)
+    else:
+        # Combined index — run all queries from all languages
+        for lang, (_, entity_to_parent, all_queries) in per_lang_data.items():
+            query_limit = max_queries if max_queries is not None else len(all_queries)
+            query_limit = min(query_limit, len(all_queries))
+            selected_queries = all_queries[:query_limit]
+
+            logger.info(
+                "Evaluating %d queries out of %d loaded records for %s",
+                query_limit, len(all_queries), lang,
+            )
+
+            engine = SearchEngine(config=evaluation_config, index=combined_index)
+
+            for qi, (query, relevant_parent) in enumerate(
+                tqdm(selected_queries, desc=f"Searching {lang}")
+            ):
+                results = engine.search(query, top_k=config.retrieval_top_k)
+                rank = _find_parent_rank(
+                    results, combined_entity_to_parent, relevant_parent, top_k=10,
+                )
+                all_ranks[lang].append(rank)
+
+    # ── Compute per-language metrics ───────────────────────────────
+    for lang, ranks in all_ranks.items():
+        if not ranks:
+            continue
         metrics = {
             "Recall@1": _recall_at_k(ranks, 1),
             "Recall@5": _recall_at_k(ranks, 5),
@@ -334,8 +547,22 @@ def evaluate_on_codesearchnet(
             "NDCG@10": _ndcg(ranks, 10),
         }
         all_results[lang] = metrics
-
         for metric, val in metrics.items():
             logger.info("  %s / %s: %.4f", lang, metric, val)
+
+    # ── Compute overall aggregate metrics ──────────────────────────
+    combined = [r for ranks in all_ranks.values() for r in ranks]
+    if combined:
+        overall = {
+            "Recall@1": _recall_at_k(combined, 1),
+            "Recall@5": _recall_at_k(combined, 5),
+            "Recall@10": _recall_at_k(combined, 10),
+            "MRR": _mrr(combined),
+            "NDCG@10": _ndcg(combined, 10),
+        }
+        all_results["overall"] = overall
+        logger.info("  overall / total queries: %d", len(combined))
+        for metric, val in overall.items():
+            logger.info("  overall / %s: %.4f", metric, val)
 
     return all_results

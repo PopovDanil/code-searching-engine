@@ -125,52 +125,148 @@ Models download from Hugging Face on first use. The defaults are:
 For a lighter setup, install `sentence-transformers`, select a smaller
 embedding model in YAML, and set `enable_reranking: false`.
 
-## Quick Start
+## CLI Commands
 
 There is no installable `codesearch` package. Run `src/cli.py` directly and
 use the same configuration for indexing and searching.
 
-### 1. Index a repository
+### `index` — Build a search index
 
 ```bash
+python src/cli.py index <repository_path> [OPTIONS]
+```
+
+Walks the repository, parses source files with Tree-sitter, embeds code
+entities, and saves a FAISS index.
+
+| Option | Description |
+|---|---|
+| `--config`, `-c` | YAML config file |
+| `--model`, `-m` | Embedding model name override |
+| `--device`, `-d` | Device: `cpu`, `cuda`, or `auto` |
+| `--index-type` | Index type: `flat` (exact) or `hnsw` (approximate) |
+| `--batch-size`, `-b` | Inference batch size |
+| `--separate-indexes`, `-s` | Build a separate index per language |
+| `--verbose`, `-v` | Enable debug logging |
+
+```bash
+# Single index (default)
 python src/cli.py index path/to/my-repo --config example_config.yaml
+
+# Per-language indexes
+python src/cli.py index path/to/my-repo --config example_config.yaml --separate-indexes
 ```
 
-The index is saved under `index/` by default.
+With `--separate-indexes`, the output directory is structured as:
 
-### 2. Search
+```
+index/
+├── manifest.json
+├── python/
+│   ├── index.faiss
+│   └── metadata.pkl
+├── go/
+│   ├── index.faiss
+│   └── metadata.pkl
+└── ...
+```
+
+### `search` — Search indexed code
 
 ```bash
-python src/cli.py search "read json file" --config example_config.yaml
-python src/cli.py search "parse command line arguments" --config example_config.yaml --top-k 5 --no-rerank
+python src/cli.py search "<query>" [OPTIONS]
 ```
 
-### 3. Evaluate on CodeSearchNet
+Embeds the query, retrieves candidates from FAISS, optionally reranks with
+the cross-encoder, and returns ranked results.
+
+| Option | Description |
+|---|---|
+| `--config`, `-c` | YAML config file |
+| `--top-k`, `-k` | Number of results to return |
+| `--language`, `-l` | Restrict search to a language (requires `--separate-indexes`) |
+| `--no-rerank` | Disable cross-encoder reranking |
+| `--verbose`, `-v` | Enable debug logging |
+
+```bash
+# Search all indexed code
+python src/cli.py search "read json file" --config example_config.yaml
+
+# Return only top 5 results, skip reranking
+python src/cli.py search "parse args" --config example_config.yaml -k 5 --no-rerank
+
+# Search only Python code (requires separate indexes)
+python src/cli.py search "parse args" --config example_config.yaml --language python
+```
+
+### `evaluate` — CodeSearchNet benchmark
+
+```bash
+python src/cli.py evaluate [OPTIONS]
+```
+
+Runs a paired-row proxy evaluation against the CodeSearchNet dataset.
+Reports Recall@k, MRR, and NDCG at parent-function level. The first run
+downloads the dataset and models.
+
+| Option | Description |
+|---|---|
+| `--config`, `-c` | YAML config file |
+| `--languages`, `-l` | Comma-separated languages (e.g. `python,go`) |
+| `--max-queries` | Max queries per language |
+| `--verbose`, `-v` | Enable debug logging |
 
 ```bash
 python src/cli.py evaluate --config example_config.yaml --languages python --max-queries 10
 ```
 
-The first run downloads the dataset and models. Use `python,go` for multiple
-languages. Evaluation applies recursive chunking and reports Recall, MRR, and
-NDCG at parent-function level. It is a paired-row proxy evaluation, not the
-official human-judged CodeSearchNet leaderboard.
-
 ## Testing
 
-Because imports are rooted in `src`, run tests from that directory:
+Tests are in `tests/` and use pytest. Because imports are rooted in `src`,
+tests must be run from that directory:
 
 ```bash
 cd src
-python -m pytest ../tests
+python -m pytest ../tests -v
 ```
 
-For a focused recursive-chunking and evaluation check:
+### What each test file covers
+
+| Test file | What it tests |
+|---|---|
+| `test_parser.py` | Language detection by file extension, Tree-sitter parser creation for each supported language, entity extraction (functions, classes, methods), `CodeEntity` identifier and structured text output |
+| `test_chunking.py` | Recursive AST-aware chunking: config validation, node splitting, overlap handling, Unicode/CRLF edge cases, chunk-entity metadata preservation |
+| `test_config.py` | `CodeSearchConfig` defaults, custom values, YAML loading, `separate_indexes` option |
+| `test_indexing.py` | FAISS index build and search (flat), empty index behavior, dimension property, per-language index save/load/manifest |
+| `test_search.py` | Metadata bonus scoring (name match, docstring match, exact match), `SearchEngine` manifest loading, language-filtered search, multi-language index merging |
+| `test_evaluation.py` | Recall@k, MRR, NDCG metrics, parent-rank collapsing, documentation detection, chunk-aware evaluation logic |
+
+### Running specific test files
+
+```bash
+cd src
+
+# Parser and chunking only
+python -m pytest ../tests/test_parser.py ../tests/test_chunking.py -v
+
+# Indexing and search
+python -m pytest ../tests/test_indexing.py ../tests/test_search.py -v
+
+# Config and evaluation
+python -m pytest ../tests/test_config.py ../tests/test_evaluation.py -v
+
+# Single test by name
+python -m pytest ../tests/test_search.py::test_search_engine_language_filter -v
+```
+
+### Quick (no model downloads)
 
 ```bash
 cd src
 python -m pytest ../tests/test_chunking.py ../tests/test_parser.py ../tests/test_evaluation.py -q
 ```
+
+These tests do not require downloading embedding or reranking models.
 
 ## Configuration
 
@@ -188,6 +284,7 @@ top_k: 10
 retrieval_top_k: 100
 index_type: "flat"
 index_dir: "index"
+separate_indexes: false
 device: "auto"
 enable_reranking: true
 include_docstring: true

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 from tqdm import tqdm
@@ -67,8 +69,12 @@ def build_index(
     repository_path: str,
     config: CodeSearchConfig,
     embedder: Optional[BaseEmbedder] = None,
-) -> FaissCodeIndex:
-    """Walk *repository_path*, parse, embed, and return a ``FaissCodeIndex``.
+) -> Optional[FaissCodeIndex]:
+    """Walk *repository_path*, parse, embed, and build index(es).
+
+    When ``config.separate_indexes`` is ``True`` a separate FAISS index is
+    created for each language found in the repository.  In that case the
+    return value is ``None`` (indexes are persisted to sub-directories).
 
     Parameters
     ----------
@@ -82,8 +88,10 @@ def build_index(
 
     Returns
     -------
-    FaissCodeIndex
-        Fully-built and persisted index.
+    FaissCodeIndex or None
+        For single-index mode the built index is returned.
+        For separate-index mode ``None`` is returned (indexes are saved to
+        ``{index_dir}/{language}/``).
     """
     repository_path = os.path.abspath(repository_path)
     if not os.path.isdir(repository_path):
@@ -157,7 +165,20 @@ def build_index(
     embeddings: np.ndarray = embedder.embed_documents(texts)
     logger.info("Embedding shape: %s", embeddings.shape)
 
-    # 6. Build FAISS index ---------------------------------------------------
+    # 6. Build index(es) -----------------------------------------------------
+    if config.separate_indexes:
+        return _build_separate_indexes(
+            embeddings, all_entities, config, texts
+        )
+    return _build_single_index(embeddings, all_entities, config)
+
+
+def _build_single_index(
+    embeddings: np.ndarray,
+    entities: List[CodeEntity],
+    config: CodeSearchConfig,
+) -> FaissCodeIndex:
+    """Build a single FAISS index containing all languages."""
     faiss_index = FaissCodeIndex(
         dimension=embeddings.shape[1],
         index_type=config.index_type,
@@ -165,8 +186,50 @@ def build_index(
         hnsw_ef_construction=config.hnsw_ef_construction,
         hnsw_ef_search=config.hnsw_ef_search,
     )
-    faiss_index.build(embeddings, all_entities)
-
-    # 7. Persist -------------------------------------------------------------
+    faiss_index.build(embeddings, entities)
     faiss_index.save(config.index_dir)
     return faiss_index
+
+
+def _build_separate_indexes(
+    embeddings: np.ndarray,
+    entities: List[CodeEntity],
+    config: CodeSearchConfig,
+    texts: List[str],
+) -> None:
+    """Build one FAISS index per language and persist to sub-directories."""
+    # Group entities and embeddings by language
+    lang_indices: Dict[str, List[int]] = defaultdict(list)
+    for i, entity in enumerate(entities):
+        lang_indices[entity.language].append(i)
+
+    manifest_languages: List[str] = []
+
+    for lang, indices in sorted(lang_indices.items()):
+        lang_entities = [entities[i] for i in indices]
+        lang_embeddings = embeddings[indices]
+        lang_dir = os.path.join(config.index_dir, lang)
+
+        logger.info("Building index for %s (%d entities)", lang, len(indices))
+
+        faiss_index = FaissCodeIndex(
+            dimension=embeddings.shape[1],
+            index_type=config.index_type,
+            hnsw_m=config.hnsw_m,
+            hnsw_ef_construction=config.hnsw_ef_construction,
+            hnsw_ef_search=config.hnsw_ef_search,
+        )
+        faiss_index.build(lang_embeddings, lang_entities)
+        faiss_index.save(lang_dir)
+        manifest_languages.append(lang)
+
+    # Write manifest
+    manifest_path = os.path.join(config.index_dir, "manifest.json")
+    with open(manifest_path, "w", encoding="utf-8") as fh:
+        json.dump({"languages": manifest_languages}, fh, indent=2)
+    logger.info(
+        "Built %d language indexes, manifest saved to %s",
+        len(manifest_languages),
+        manifest_path,
+    )
+    return None

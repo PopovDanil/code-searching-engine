@@ -11,6 +11,7 @@ from evaluation.evaluate import (
     _ndcg,
     _prepare_evaluation_example,
     _recall_at_k,
+    _cache_key,
 )
 
 
@@ -231,3 +232,48 @@ def test_non_python_attached_documentation_is_not_indexed():
         not _contains_documentation(chunk.source_code, documentation)
         for chunk in chunks
     )
+
+
+def test_cache_key_deterministic():
+    key1 = _cache_key(500000, "Qwen/Qwen3-Embedding-0.6B", "test")
+    key2 = _cache_key(500000, "Qwen/Qwen3-Embedding-0.6B", "test")
+    assert key1 == key2
+    assert isinstance(key1, str)
+    assert len(key1) == 16
+
+
+def test_cache_key_varies_with_params():
+    base = _cache_key(500000, "Qwen/Qwen3-Embedding-0.6B", "test")
+    assert _cache_key(100000, "Qwen/Qwen3-Embedding-0.6B", "test") != base
+    assert _cache_key(500000, "other-model", "test") != base
+    assert _cache_key(500000, "Qwen/Qwen3-Embedding-0.6B", "validation") != base
+
+
+def test_max_dataset_records_division_even():
+    total = 600000
+    langs = ["python", "java", "javascript", "go", "ruby", "php"]
+    num_langs = len(langs)
+    per_lang_base = total // num_langs
+    remainder = total % num_langs
+    limits = {
+        lang: per_lang_base + (1 if i < remainder else 0)
+        for i, lang in enumerate(langs)
+    }
+    assert all(v == 100000 for v in limits.values())
+    assert sum(limits.values()) == total
+
+
+def test_max_dataset_records_division_uneven():
+    total = 500000
+    langs = ["python", "java", "javascript", "go", "ruby", "php"]
+    num_langs = len(langs)
+    per_lang_base = total // num_langs
+    remainder = total % num_langs
+    limits = {
+        lang: per_lang_base + (1 if i < remainder else 0)
+        for i, lang in enumerate(langs)
+    }
+    assert sum(limits.values()) == total
+    assert limits["python"] == 83334  # first 2 languages get +1
+    assert limits["java"] == 83334
+    assert limits["javascript"] == 83333

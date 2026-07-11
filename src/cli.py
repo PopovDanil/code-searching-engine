@@ -18,6 +18,8 @@ def _setup_logging(verbose: bool = False) -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    for name in ("httpx", "httpcore", "urllib3"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 @app.command()
@@ -28,6 +30,7 @@ def index(
     device: Optional[str] = typer.Option(None, "--device", "-d", help="Device (cpu/cuda/auto)"),
     index_type: Optional[str] = typer.Option(None, "--index-type", help="Index type (flat/hnsw)"),
     batch_size: Optional[int] = typer.Option(None, "--batch-size", "-b", help="Batch size"),
+    separate_indexes: bool = typer.Option(False, "--separate-indexes", "-s", help="Build a separate index per language"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Index a repository for semantic search."""
@@ -49,13 +52,18 @@ def index(
         config.index_type = index_type
     if batch_size:
         config.batch_size = batch_size
+    if separate_indexes:
+        config.separate_indexes = True
 
     from indexing.build_index import build_index
 
     logger.info("Indexing repository: %s", repository_path)
     try:
         faiss_index = build_index(repository_path, config)
-        logger.info("Index built successfully (%d vectors)", faiss_index.ntotal)
+        if faiss_index is not None:
+            logger.info("Index built successfully (%d vectors)", faiss_index.ntotal)
+        else:
+            logger.info("Separate per-language indexes built successfully")
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -66,6 +74,7 @@ def search(
     query: str = typer.Argument(..., help="Search query"),
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="YAML config file"),
     top_k: Optional[int] = typer.Option(None, "--top-k", "-k", help="Number of results"),
+    language: Optional[str] = typer.Option(None, "--language", "-l", help="Restrict search to a language (requires --separate-indexes)"),
     no_rerank: bool = typer.Option(False, "--no-rerank", help="Disable reranking"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -90,7 +99,7 @@ def search(
     engine = SearchEngine(config=config)
 
     try:
-        results = engine.search(query, top_k=config.top_k)
+        results = engine.search(query, top_k=config.top_k, language=language)
     except FileNotFoundError:
         typer.echo("Error: No index found. Run 'index' command first.", err=True)
         sys.exit(1)
@@ -109,7 +118,9 @@ def search(
 @app.command()
 def evaluate(
     languages: Optional[str] = typer.Option(None, "--languages", "-l", help="Comma-separated languages"),
-    max_queries: Optional[int] = typer.Option(None, "--max-queries", help="Max queries per language"),
+    max_queries: Optional[int] = typer.Option(None, "--max-queries", help="Max evaluation queries per language"),
+    max_dataset_records: Optional[int] = typer.Option(None, "--max-dataset-records", help="Total records across all languages to load into the database"),
+    separate_indexes: Optional[bool] = typer.Option(None, "--separate-indexes", "-s", help="Build separate per-language indexes (default: combined)"),
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="YAML config file"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -123,6 +134,13 @@ def evaluate(
     else:
         config = CodeSearchConfig()
 
+    if separate_indexes is not None:
+        config.separate_indexes = separate_indexes
+
+    # CLI --max-queries overrides config max_dataset_records (per-language query cap)
+    effective_max_queries = max_queries
+    effective_max_dataset_records = max_dataset_records or config.max_dataset_records
+
     lang_list = languages.split(",") if languages else None
 
     from evaluation.evaluate import evaluate_on_codesearchnet
@@ -130,7 +148,8 @@ def evaluate(
     results = evaluate_on_codesearchnet(
         config=config,
         languages=lang_list,
-        max_queries=max_queries,
+        max_queries=effective_max_queries,
+        max_dataset_records=effective_max_dataset_records,
     )
 
     typer.echo("\nEvaluation Results:")

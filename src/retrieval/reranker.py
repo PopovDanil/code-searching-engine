@@ -71,12 +71,26 @@ class Qwen3Reranker(BaseReranker):
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
+        if device == "cpu" and torch.cuda.is_available():
+            logger.warning(
+                "CUDA is available but reranker is on CPU — reranking will be slow. "
+                "Set device='cuda' or device='auto' in your config."
+            )
+
         self._device = torch.device(device)
         self._max_seq_length = max_seq_length
         self._batch_size = batch_size
         self._include_docstring = include_docstring
 
-        dtype = torch_dtype or (torch.float16 if self._device.type == "cuda" else torch.float32)
+        if torch_dtype is not None:
+            dtype = torch_dtype
+        elif self._device.type == "cuda":
+            if torch.cuda.is_bf16_supported():
+                dtype = torch.bfloat16
+            else:
+                dtype = torch.float16
+        else:
+            dtype = torch.float32
 
         logger.info("Loading reranker model %s on %s (dtype=%s)", model_name, device, dtype)
         self._tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)

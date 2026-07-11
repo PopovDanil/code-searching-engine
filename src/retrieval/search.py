@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import time
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 from config import CodeSearchConfig
 from embedding.embedder import BaseEmbedder, create_embedder
@@ -86,7 +88,7 @@ class SearchEngine:
     reranker:
         Optional pre-initialised reranker.
     index:
-        Optional pre-loaded FAISS index.
+        Optional pre-loaded FAISS index (single-index mode).
     """
 
     def __init__(
@@ -100,6 +102,8 @@ class SearchEngine:
         self._embedder = embedder
         self._reranker = reranker
         self._index = index
+        self._language_indexes: Dict[str, FaissCodeIndex] = {}
+        self._manifest_loaded = False
 
     # ── Lazy initialisation ─────────────────────────────────────────────
 
@@ -133,10 +137,61 @@ class SearchEngine:
             self._index = FaissCodeIndex.load(self._config.index_dir)
         return self._index
 
+    def _load_manifest(self) -> List[str]:
+        """Load the language manifest for separate-index mode."""
+        if self._manifest_loaded:
+            return list(self._language_indexes.keys())
+
+        manifest_path = os.path.join(self._config.index_dir, "manifest.json")
+        if not os.path.exists(manifest_path):
+            self._manifest_loaded = True
+            return []
+
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        languages = manifest.get("languages", [])
+
+        for lang in languages:
+            lang_dir = os.path.join(self._config.index_dir, lang)
+            if os.path.isdir(lang_dir):
+                self._language_indexes[lang] = FaissCodeIndex.load(lang_dir)
+
+        self._manifest_loaded = True
+        return list(self._language_indexes.keys())
+
+    def _ensure_language_index(self, language: str) -> FaissCodeIndex:
+        """Load a specific language index, raising if not found."""
+        self._load_manifest()
+        if language not in self._language_indexes:
+            lang_dir = os.path.join(self._config.index_dir, language)
+            if os.path.isdir(lang_dir):
+                self._language_indexes[language] = FaissCodeIndex.load(lang_dir)
+            else:
+                raise FileNotFoundError(
+                    f"No index found for language '{language}'. "
+                    f"Available: {list(self._language_indexes.keys())}"
+                )
+        return self._language_indexes[language]
+
     # ── Public API ──────────────────────────────────────────────────────
 
-    def search(self, query: str, top_k: Optional[int] = None) -> List[SearchResult]:
+    def search(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        language: Optional[str] = None,
+    ) -> List[SearchResult]:
         """Execute a semantic search for *query*.
+
+        Parameters
+        ----------
+        query:
+            The search query string.
+        top_k:
+            Number of final results to return.
+        language:
+            If provided, restrict search to this language index
+            (only effective in separate-index mode).
 
         Steps:
         1. Embed the query.
@@ -148,7 +203,6 @@ class SearchEngine:
         k = top_k or self._config.top_k
         w = self._config.weights
         embedder = self._ensure_embedder()
-        faiss_idx = self._ensure_index()
 
         # 1. Embed query
         t0 = time.perf_counter()
@@ -157,7 +211,7 @@ class SearchEngine:
 
         # 2. FAISS retrieval
         t0 = time.perf_counter()
-        candidates = faiss_idx.search(query_vec, top_k=self._config.retrieval_top_k)
+        candidates = self._retrieve_candidates(query_vec, language)
         logger.info(
             "FAISS search latency: %.2f ms (candidates=%d)",
             (time.perf_counter() - t0) * 1000,
@@ -170,16 +224,11 @@ class SearchEngine:
         reranked = reranker.rerank(query, candidates, batch_size=self._config.batch_size)
         logger.info("Reranking latency: %.2f ms", (time.perf_counter() - t0) * 1000)
 
-        # 4. Scoring
+        # 4. Scoring — build a lookup dict for O(1) embedding similarity retrieval
+        emb_sim_map = {id(ent): sim for ent, sim in candidates}
         results: List[SearchResult] = []
         for entity, reranker_score in reranked:
-            emb_sim = 0.0
-            # Recover embedding similarity from candidates list
-            for ent, sim in candidates:
-                if ent is entity:
-                    emb_sim = sim
-                    break
-
+            emb_sim = emb_sim_map.get(id(entity), 0.0)
             meta_bonus = _compute_metadata_bonus(entity, query)
 
             # If reranking is disabled, reranker_score is the embedding similarity
@@ -206,6 +255,39 @@ class SearchEngine:
         # Sort by final score descending
         results.sort(key=lambda r: r.final_score, reverse=True)
         return results[:k]
+
+    def _retrieve_candidates(
+        self,
+        query_vec,
+        language: Optional[str] = None,
+    ):
+        """Retrieve candidates from FAISS, supporting both index modes."""
+        if self._config.separate_indexes:
+            return self._retrieve_separate(query_vec, language)
+        faiss_idx = self._ensure_index()
+        return faiss_idx.search(query_vec, top_k=self._config.retrieval_top_k)
+
+    def _retrieve_separate(
+        self,
+        query_vec,
+        language: Optional[str] = None,
+    ):
+        """Retrieve candidates from per-language indexes."""
+        if language:
+            faiss_idx = self._ensure_language_index(language)
+            return faiss_idx.search(query_vec, top_k=self._config.retrieval_top_k)
+
+        # Search all language indexes and merge results
+        self._load_manifest()
+        all_candidates = []
+        per_lang_k = max(1, self._config.retrieval_top_k // max(1, len(self._language_indexes)))
+        for lang, faiss_idx in self._language_indexes.items():
+            candidates = faiss_idx.search(query_vec, top_k=per_lang_k)
+            all_candidates.extend(candidates)
+
+        # Sort by similarity and take top retrieval_top_k
+        all_candidates.sort(key=lambda x: x[1], reverse=True)
+        return all_candidates[: self._config.retrieval_top_k]
 
     def set_index(self, index: FaissCodeIndex) -> None:
         """Replace the current FAISS index."""
