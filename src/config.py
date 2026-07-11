@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Optional
 
 
 def _auto_device() -> str:
@@ -31,6 +31,8 @@ class CodeSearchConfig:
     batch_size: int = 16
     max_seq_length: int = 512
     num_parser_workers: int = 4
+    max_chunk_chars: Optional[int] = 1500
+    chunk_overlap_chars: int = 150
 
     # ── Retrieval ───────────────────────────────────────────────────────
     top_k: int = 10
@@ -68,6 +70,31 @@ class CodeSearchConfig:
     embedding_dtype: str = "float16"  # "float16" | "float32" | "bfloat16"
 
     # -------------------------------------------------------------------
+    def __post_init__(self) -> None:
+        """Validate recursive chunking limits before parser workers start."""
+        self.validate_chunking()
+
+    def validate_chunking(self) -> None:
+        """Validate the current recursive chunking settings."""
+        if self.max_chunk_chars is None:
+            return
+        if not isinstance(self.max_chunk_chars, int) or isinstance(
+            self.max_chunk_chars, bool
+        ):
+            raise ValueError("max_chunk_chars must be an integer or null")
+        if not isinstance(self.chunk_overlap_chars, int) or isinstance(
+            self.chunk_overlap_chars, bool
+        ):
+            raise ValueError("chunk_overlap_chars must be an integer")
+        if self.max_chunk_chars <= 0:
+            raise ValueError("max_chunk_chars must be greater than zero")
+        if self.chunk_overlap_chars < 0:
+            raise ValueError("chunk_overlap_chars cannot be negative")
+        if self.chunk_overlap_chars >= self.max_chunk_chars:
+            raise ValueError(
+                "chunk_overlap_chars must be smaller than max_chunk_chars"
+            )
+
     @classmethod
     def from_yaml(cls, path: str) -> "CodeSearchConfig":
         """Load configuration from a YAML file.

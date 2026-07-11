@@ -22,9 +22,11 @@ Repository
     ↓
 Tree-sitter Parser ─── Parallel file parsing
     ↓
-Extract functions / classes / methods
+Extract function / class / method AST nodes
     ↓
-Normalize code
+Recursive AST-aware chunking
+    ↓
+Normalize each chunk
     ↓
 Create structured text representation
     ↓
@@ -38,6 +40,47 @@ Cross-Encoder Reranker (Qwen3-Reranker-8B)
     ↓
 Weighted Scoring → Final Results
 ```
+
+### Recursive Chunking
+
+Tree-sitter does not create the final chunks itself. It parses a source file
+into an abstract syntax tree (AST), and the extractor selects the AST nodes
+that represent functions, classes, and methods. The recursive chunker then
+processes each selected node as follows:
+
+1. If the complete node fits within `max_chunk_chars`, it becomes one chunk.
+2. If it is too large, the chunker visits its direct Tree-sitter children in
+   source order and recursively splits children that are still too large.
+3. Text between child nodes is retained, so comments, punctuation, and
+   whitespace are not lost.
+4. If an oversized node has no smaller useful AST children, the chunker falls
+   back to text boundaries in increasingly fine order: blank lines, line
+   breaks, spaces or tabs, any other whitespace, and finally a hard
+   Unicode-character boundary.
+5. Adjacent spans are packed up to the configured limit. Later chunks repeat
+   up to `chunk_overlap_chars` characters from the preceding source region.
+
+In short, the hierarchy is:
+
+```text
+extracted AST node
+├── fits the limit → emit one chunk
+└── too large → recursively process AST children
+    └── no useful smaller child → recursively use text separators
+        └── no separator available → hard character split
+```
+
+Every emitted chunk keeps the original entity metadata, including repository,
+file, language, function/class name, signature, and docstring. It also records
+its zero-based chunk index, total chunk count, exact one-based source line
+range, and the original parent entity's line range. Each chunk is embedded and
+stored as a separate FAISS vector.
+
+`max_chunk_chars` bounds the source-code slice, including overlap, and both
+chunk settings count Unicode characters rather than model tokens. The
+structured metadata added before embedding is not part of this character
+budget. Overlap must be non-negative and smaller than the maximum chunk size.
+Set `max_chunk_chars: null` to disable recursive chunking.
 
 ### Scoring Formula
 
@@ -135,6 +178,8 @@ Copy `example_config.yaml` and edit to taste:
 embedding_model: "Qwen/Qwen3-Embedding-8B"
 reranker_model: "Qwen/Qwen3-Reranker-8B"
 batch_size: 16
+max_chunk_chars: 1500
+chunk_overlap_chars: 150
 top_k: 10
 index_type: "flat"
 device: "auto"
@@ -146,6 +191,11 @@ weights:
 
 Pass the config with `--config path/to/config.yaml`.
 
+The default chunk size is 1500 characters with 150 characters of overlap.
+Smaller chunks improve retrieval precision but create more vectors; larger
+chunks preserve more surrounding context but approach the embedding model's
+sequence limit.
+
 ## Project Structure
 
 ```
@@ -156,7 +206,8 @@ codesearch/
 ├── parser/
 │   ├── __init__.py
 │   ├── parser.py            # Tree-sitter language setup & parsing
-│   └── extract.py           # Entity extraction & structured text
+│   ├── extract.py           # Entity extraction & structured text
+│   └── chunker.py           # Recursive AST-aware code chunking
 ├── embedding/
 │   ├── __init__.py
 │   └── embedder.py          # BaseEmbedder, Qwen3Embedder, factory
@@ -212,6 +263,9 @@ On CPU, expect 10–50× slower inference.
   supported.
 - **CodeSearchNet evaluation:** The `datasets` download can be large
   (~10 GB total for all languages).
+- **Character-based chunks:** Chunk limits are measured in Unicode characters,
+  not tokenizer tokens. Structured metadata also consumes part of the model's
+  sequence length.
 
 ## License
 

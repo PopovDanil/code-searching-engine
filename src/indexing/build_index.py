@@ -27,7 +27,9 @@ def _process_file(args: tuple) -> List[CodeEntity]:
 
     Accepts a tuple so this function is picklable for ProcessPoolExecutor.
     """
-    file_path, repository, language = args
+    file_path, repository, language, *chunk_options = args
+    max_chunk_chars = chunk_options[0] if chunk_options else None
+    chunk_overlap_chars = chunk_options[1] if len(chunk_options) > 1 else 0
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
             source_code = fh.read()
@@ -54,6 +56,8 @@ def _process_file(args: tuple) -> List[CodeEntity]:
         language=language,
         repository=os.path.basename(repository),
         file_path=rel_path,
+        max_chunk_chars=max_chunk_chars,
+        chunk_overlap_chars=chunk_overlap_chars,
     )
 
 
@@ -84,6 +88,7 @@ def build_index(
     repository_path = os.path.abspath(repository_path)
     if not os.path.isdir(repository_path):
         raise FileNotFoundError(f"Repository path does not exist: {repository_path}")
+    config.validate_chunking()
 
     # 1. Collect source files ------------------------------------------------
     supported_exts = set()
@@ -102,7 +107,15 @@ def build_index(
             full = os.path.join(root, fname)
             if Path(fname).suffix.lower() in supported_exts:
                 lang = detect_language(full)
-                file_args.append((full, repository_path, lang))
+                file_args.append(
+                    (
+                        full,
+                        repository_path,
+                        lang,
+                        config.max_chunk_chars,
+                        config.chunk_overlap_chars,
+                    )
+                )
 
     logger.info("Found %d source files in %s", len(file_args), repository_path)
     if not file_args:

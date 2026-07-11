@@ -9,6 +9,8 @@ reranker_model: "Qwen/Qwen3-Reranker-0.6B"
 batch_size: 16
 max_seq_length: 512
 num_parser_workers: 4
+max_chunk_chars: 1500       # Unicode characters; null disables chunking
+chunk_overlap_chars: 150
 
 # ── Retrieval ───────────────────────────────────────────────────────
 top_k: 10

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Optional
 
 from tree_sitter import Node, Tree
 
+from parser.chunker import recursive_chunk_node
 from parser.parser import SUPPORTED_LANGUAGES, LangInfo
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,10 @@ class CodeEntity:
     source_code: str
     start_line: int
     end_line: int
+    chunk_index: int = 0
+    chunk_count: int = 1
+    parent_start_line: Optional[int] = None
+    parent_end_line: Optional[int] = None
 
     # ── Derived helpers ─────────────────────────────────────────────────
 
@@ -227,6 +232,9 @@ def extract_entities(
     language: str,
     repository: str,
     file_path: str,
+    *,
+    max_chunk_chars: Optional[int] = None,
+    chunk_overlap_chars: int = 0,
 ) -> List[CodeEntity]:
     """Walk *tree* and return every function, method, and class found.
 
@@ -242,6 +250,11 @@ def extract_entities(
         Repository identifier (directory name or dataset label).
     file_path:
         Relative file path inside the repository.
+    max_chunk_chars:
+        Maximum number of Unicode characters per recursive chunk, including
+        overlap.  ``None`` keeps each extracted entity whole.
+    chunk_overlap_chars:
+        Number of characters repeated from the preceding chunk.
 
     Returns
     -------
@@ -301,6 +314,31 @@ def extract_entities(
             start_line=node.start_point[0] + 1,  # 1-indexed
             end_line=node.end_point[0] + 1,
         )
-        entities.append(entity)
+
+        if max_chunk_chars is None:
+            entities.append(entity)
+            continue
+
+        spans = recursive_chunk_node(
+            node,
+            source_bytes,
+            max_chars=max_chunk_chars,
+            overlap_chars=chunk_overlap_chars,
+        )
+        chunk_count = len(spans)
+        for chunk_index, span in enumerate(spans):
+            chunk_code = re.sub(r"\n{3,}", "\n\n", span.text)
+            entities.append(
+                replace(
+                    entity,
+                    source_code=chunk_code,
+                    start_line=span.start_line,
+                    end_line=span.end_line,
+                    chunk_index=chunk_index,
+                    chunk_count=chunk_count,
+                    parent_start_line=entity.start_line,
+                    parent_end_line=entity.end_line,
+                )
+            )
 
     return entities
