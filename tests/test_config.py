@@ -7,11 +7,17 @@ from config import CodeSearchConfig
 
 def test_default_config():
     config = CodeSearchConfig()
-    assert config.embedding_model == "Qwen/Qwen3-Embedding-8B"
-    assert config.batch_size == 64
+    assert config.embedding_model == "Qwen/Qwen3-Embedding-0.6B"
+    assert config.batch_size == 16
     assert config.top_k == 10
     assert config.index_type == "flat"
     assert config.enable_reranking is True
+
+
+def test_reranker_prompt_defaults():
+    config = CodeSearchConfig()
+    assert config.reranker_max_length == 2048
+    assert config.reranker_instruction
 
 
 def test_weights_default():
