@@ -34,6 +34,12 @@ def test_query_rewriting_from_yaml():
     assert config.reranker_language_hint is True
 
 
+def test_reranker_prompt_defaults():
+    config = CodeSearchConfig()
+    assert config.reranker_max_length == 2048
+    assert config.reranker_instruction
+
+
 def test_weights_default():
     config = CodeSearchConfig()
     assert config.weights["reranker"] == 0.75

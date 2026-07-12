@@ -12,8 +12,8 @@ from typing import List, Optional, Tuple
 
 import torch
 
+from console import console, log_model_loaded, log_model_loading
 from parser.extract import CodeEntity
-from console import console, log_model_loading, log_model_loaded
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,24 @@ class BaseReranker(ABC):
 
 # ── Qwen3-Reranker implementation ───────────────────────────────────────
 
+# Official Qwen3-Reranker chat template. The prefix and suffix are
+# tokenized separately so that truncation can never eat the assistant
+# tag or the <think> block the model was trained with.
+_PROMPT_PREFIX = (
+    "<|im_start|>system\n"
+    "Judge whether the Document meets the requirements based on the Query "
+    'and the Instruct provided. Note that the answer can only be "yes" or "no".'
+    "<|im_end|>\n"
+    "<|im_start|>user\n"
+)
+_PROMPT_SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
+
+_DEFAULT_INSTRUCTION = (
+    "Given a natural-language search query, judge whether the code "
+    "snippet implements the functionality described in the query."
+)
+
+
 class Qwen3Reranker(BaseReranker):
     """Reranker using Qwen3-Reranker-8B (or any Qwen3-Reranker variant).
 
@@ -67,6 +85,7 @@ class Qwen3Reranker(BaseReranker):
         torch_dtype: Optional[torch.dtype] = None,
         include_docstring: bool = True,
         language_hint: bool = False,
+        instruction: str = _DEFAULT_INSTRUCTION,
     ) -> None:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -84,6 +103,7 @@ class Qwen3Reranker(BaseReranker):
         self._batch_size = batch_size
         self._include_docstring = include_docstring
         self._language_hint = language_hint
+        self._instruction = instruction
 
         if torch_dtype is not None:
             dtype = torch_dtype
@@ -110,44 +130,53 @@ class Qwen3Reranker(BaseReranker):
         log_model_loaded(console, model_name)
 
         # Resolve yes/no token ids
-        self._yes_token_id = self._tokenizer("yes", add_special_tokens=False)["input_ids"][0]
-        self._no_token_id = self._tokenizer("no", add_special_tokens=False)["input_ids"][0]
+        self._yes_token_id = self._tokenizer.convert_tokens_to_ids("yes")
+        self._no_token_id = self._tokenizer.convert_tokens_to_ids("no")
+
+        # Pre-tokenize the fixed prompt parts; only the pair text in the
+        # middle is ever truncated.
+        self._prefix_ids = self._tokenizer.encode(_PROMPT_PREFIX, add_special_tokens=False)
+        self._suffix_ids = self._tokenizer.encode(_PROMPT_SUFFIX, add_special_tokens=False)
+        self._pair_budget = max_seq_length - len(self._prefix_ids) - len(self._suffix_ids)
+        if self._pair_budget <= 0:
+            raise ValueError(
+                f"max_seq_length={max_seq_length} is too small for the reranker "
+                f"prompt template ({len(self._prefix_ids) + len(self._suffix_ids)} "
+                "tokens of fixed prefix/suffix)"
+            )
 
     # ── internal ─────────────────────────────────────────────────────────
 
-    def _format_prompt(
-        self, query: str, document: str, language: Optional[str] = None,
-    ) -> str:
-        """Build the chat prompt for the reranker."""
-        language_line = ""
-        if self._language_hint and language:
-            language_line = (
-                f"The document is source code written in {language.capitalize()}.\n"
-            )
+    def _format_pair(self, query: str, document: str) -> str:
+        """Build the instruction/query/document block (without chat tags)."""
         return (
-            "<|im_start|>system\n"
-            'Judge whether the Document is relevant to the Query. Answer only "yes" or "no".'
-            "<|im_end|>\n"
-            "<|im_start|>user\n"
-            f"<Query>{query}</Query>\n"
-            f"{language_line}"
-            f"<Document>{document}</Document>"
-            "<|im_end|>\n"
-            "<|im_start|>assistant\n"
+            f"<Instruct>: {self._instruction}\n"
+            f"<Query>: {query}\n"
+            f"<Document>: {document}"
         )
 
-    def _score_batch(self, prompts: List[str]) -> List[float]:
-        """Score a batch of prompts, returning the P("yes") for each."""
+    def _score_batch(self, pairs: List[str]) -> List[float]:
+        """Score a batch of pair texts, returning the P("yes") for each."""
         encoded = self._tokenizer(
-            prompts,
+            pairs,
+            padding=False,
+            truncation="longest_first",
+            max_length=self._pair_budget,
+            add_special_tokens=False,
+            return_attention_mask=False,
+        )
+        input_ids = [
+            self._prefix_ids + ids + self._suffix_ids
+            for ids in encoded["input_ids"]
+        ]
+        batch = self._tokenizer.pad(
+            {"input_ids": input_ids},
             padding=True,
-            truncation=True,
-            max_length=self._max_seq_length,
             return_tensors="pt",
         ).to(self._device)
 
         with torch.no_grad():
-            outputs = self._model(**encoded)
+            outputs = self._model(**batch)
 
         logits = outputs.logits[:, -1, :]  # last token logits
         yes_no_logits = logits[:, [self._yes_token_id, self._no_token_id]]
@@ -172,15 +201,11 @@ class Qwen3Reranker(BaseReranker):
 
         for start in range(0, len(candidates), bs):
             batch = candidates[start : start + bs]
-            prompts = [
-                self._format_prompt(
-                    query,
-                    ent.to_structured_text(include_docstring=self._include_docstring),
-                    ent.language,
-                )
+            pairs = [
+                self._format_pair(query, ent.to_structured_text(include_docstring=self._include_docstring))
                 for ent, _ in batch
             ]
-            scores = self._score_batch(prompts)
+            scores = self._score_batch(pairs)
             for (ent, _), score in zip(batch, scores):
                 scored.append((ent, score))
 
@@ -213,6 +238,7 @@ def create_reranker(
     torch_dtype: Optional[torch.dtype] = None,
     include_docstring: bool = True,
     language_hint: bool = False,
+    instruction: str = _DEFAULT_INSTRUCTION,
 ) -> BaseReranker:
     """Instantiate the correct reranker based on *model_name*."""
     if not enabled:
@@ -240,4 +266,5 @@ def create_reranker(
         torch_dtype=torch_dtype,
         include_docstring=include_docstring,
         language_hint=language_hint,
+        instruction=instruction,
     )

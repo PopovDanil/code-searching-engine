@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from rich.panel import Panel
@@ -17,8 +17,8 @@ from config import CodeSearchConfig
 from embedding.embedder import BaseEmbedder, create_embedder
 from indexing.faiss_index import FaissCodeIndex
 from parser.extract import CodeEntity
-from retrieval.reranker import BaseReranker, create_reranker
 from retrieval.query_rewriter import BaseQueryRewriter, create_query_rewriter
+from retrieval.reranker import BaseReranker, create_reranker
 
 logger = logging.getLogger(__name__)
 
@@ -162,12 +162,13 @@ class SearchEngine:
             self._reranker = create_reranker(
                 model_name=self._config.reranker_model,
                 device=self._config.device,
-                max_seq_length=self._config.max_seq_length,
+                max_seq_length=self._config.reranker_max_length,
                 batch_size=self._config.batch_size,
                 enabled=self._config.enable_reranking,
                 torch_dtype=self._config.get_torch_dtype(),
                 include_docstring=self._config.include_docstring,
                 language_hint=self._config.reranker_language_hint,
+                instruction=self._config.reranker_instruction,
             )
         return self._reranker
 
