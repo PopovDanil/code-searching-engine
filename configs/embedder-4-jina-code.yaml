@@ -1,0 +1,9 @@
+# jina-embeddings-v2-base-code (161M) — код-специфичный (обучен на code-парах).
+# Заменил SFR-400M: тот падает с CUDA device-side assert в кастомном rotary
+# (Alibaba new_impl) на T4.
+embedding_model: "jinaai/jina-embeddings-v2-base-code"
+embedder_trust_remote_code: true
+enable_reranking: false
+device: "cuda"
+batch_size: 32
+index_dir: "index_jina_code"

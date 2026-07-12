@@ -1,0 +1,6 @@
+# all-MiniLM-L6-v2 (23M) — нижняя планка для контраста
+embedding_model: "sentence-transformers/all-MiniLM-L6-v2"
+enable_reranking: false
+device: "cuda"
+batch_size: 64
+index_dir: "index_minilm"

@@ -29,6 +29,16 @@ class CodeSearchConfig:
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
     reranker_model: str = "Qwen/Qwen3-Reranker-0.6B"
 
+    # ── Sentence-Transformers embedder options ──────────────────────────
+    # Query-side prefix required by some code embedders (e.g. CodeRankEmbed
+    # expects "Represent this query for searching relevant code: ").
+    st_query_prefix: str = ""
+    # Allow custom model code from the Hub (CodeRankEmbed, CodeSage, ...).
+    embedder_trust_remote_code: bool = False
+    # Extra kwargs for the model config, e.g. GTE-based models (SFR) need
+    # unpad_inputs/use_memory_efficient_attention disabled without xformers.
+    st_config_kwargs: Dict[str, object] = field(default_factory=dict)
+
     # ── Processing ──────────────────────────────────────────────────────
     batch_size: int = 16
     max_seq_length: int = 512
