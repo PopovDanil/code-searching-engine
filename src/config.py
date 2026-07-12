@@ -33,6 +33,9 @@ class CodeSearchConfig:
     st_query_prefix: str = ""
     # Allow custom model code from the Hub (CodeRankEmbed, CodeSage, ...).
     embedder_trust_remote_code: bool = False
+    # Extra kwargs for the model config, e.g. GTE-based models (SFR) need
+    # unpad_inputs/use_memory_efficient_attention disabled without xformers.
+    st_config_kwargs: Dict[str, object] = field(default_factory=dict)
 
     # ── Processing ──────────────────────────────────────────────────────
     batch_size: int = 16

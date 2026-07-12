@@ -192,6 +192,7 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         batch_size: int = 64,
         query_prefix: str = "",
         trust_remote_code: bool = False,
+        config_kwargs: Optional[dict] = None,
     ) -> None:
         from sentence_transformers import SentenceTransformer
 
@@ -205,7 +206,10 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self._query_prefix = query_prefix
         logger.info("Loading sentence-transformers model %s on %s", model_name, device)
         self._model = SentenceTransformer(
-            model_name, device=device, trust_remote_code=trust_remote_code
+            model_name,
+            device=device,
+            trust_remote_code=trust_remote_code,
+            config_kwargs=config_kwargs or None,
         )
         # sentence-transformers >= 5.x renamed the method
         get_dim = getattr(self._model, "get_embedding_dimension", None)
@@ -245,6 +249,7 @@ def create_embedder(
     torch_dtype: Optional[torch.dtype] = None,
     query_prefix: str = "",
     trust_remote_code: bool = False,
+    config_kwargs: Optional[dict] = None,
 ) -> BaseEmbedder:
     """Instantiate the correct embedder based on *model_name*.
 
@@ -268,6 +273,7 @@ def create_embedder(
             batch_size=batch_size,
             query_prefix=query_prefix,
             trust_remote_code=trust_remote_code,
+            config_kwargs=config_kwargs,
         )
     except ImportError:
         raise ImportError(

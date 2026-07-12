@@ -160,6 +160,7 @@ def build_index(
             torch_dtype=config.get_torch_dtype(),
             query_prefix=config.st_query_prefix,
             trust_remote_code=config.embedder_trust_remote_code,
+            config_kwargs=config.st_config_kwargs,
         )
 
     # 5. Embed all documents -------------------------------------------------
