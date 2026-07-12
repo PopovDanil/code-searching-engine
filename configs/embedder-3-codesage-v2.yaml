@@ -1,7 +1,0 @@
-# CodeSage-base-v2 (356M) — код-специфичный, CoIR ~64.5, Apache-2.0
-embedding_model: "codesage/codesage-base-v2"
-embedder_trust_remote_code: true
-enable_reranking: false
-device: "cuda"
-batch_size: 32
-index_dir: "index_codesage_v2"

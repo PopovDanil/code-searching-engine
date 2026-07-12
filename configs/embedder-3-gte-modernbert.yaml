@@ -1,0 +1,8 @@
+# gte-modernbert-base (149M) — сильный text+code эмбеддер, 8192 ctx, Apache-2.0.
+# Заменил CodeSage-v2: его remote code несовместим с текущим transformers
+# (импортирует Conv1D из modeling_utils, удалённый годы назад).
+embedding_model: "Alibaba-NLP/gte-modernbert-base"
+enable_reranking: false
+device: "cuda"
+batch_size: 32
+index_dir: "index_gte_modernbert"
