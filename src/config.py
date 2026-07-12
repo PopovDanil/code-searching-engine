@@ -67,7 +67,7 @@ class CodeSearchConfig:
     # Query rewriting is opt-in to preserve the original retrieval behaviour.
     enable_query_rewriting: bool = False
     query_rewrite_strategy: str = "none"  # "none" | "rewrite" | "hyde"
-    query_rewriter_model: str = "HuggingFaceTB/SmolLM2-135M-Instruct"
+    query_rewriter_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
     query_rewriter_max_new_tokens: int = 128
 
     # Add the candidate's programming language to the reranker prompt.
