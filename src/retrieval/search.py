@@ -124,11 +124,12 @@ class SearchEngine:
             self._reranker = create_reranker(
                 model_name=self._config.reranker_model,
                 device=self._config.device,
-                max_seq_length=self._config.max_seq_length,
+                max_seq_length=self._config.reranker_max_length,
                 batch_size=self._config.batch_size,
                 enabled=self._config.enable_reranking,
                 torch_dtype=self._config.get_torch_dtype(),
                 include_docstring=self._config.include_docstring,
+                instruction=self._config.reranker_instruction,
             )
         return self._reranker
 

@@ -39,6 +39,8 @@ weights:
 
 # ── Reranker ────────────────────────────────────────────────────────
 enable_reranking: true
+reranker_max_length: 2048   # token budget for the reranker prompt (separate from max_seq_length)
+reranker_instruction: "Given a natural-language search query, judge whether the code snippet implements the functionality described in the query."
 
 # ── Embedding instruction ───────────────────────────────────────────
 query_instruction: "Retrieve relevant source code based on the user query"
