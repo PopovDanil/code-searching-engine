@@ -77,7 +77,7 @@ class CodeSearchConfig:
     # Token budget for the full reranker prompt (prefix + pair + suffix).
     # Kept separate from max_seq_length: Qwen3-Reranker handles long
     # contexts, while 512 would truncate most (query, code) pairs.
-    reranker_max_length: int = 2048
+    reranker_max_length: int = 512
     reranker_instruction: str = (
         "Given a natural-language search query, judge whether the code "
         "snippet implements the functionality described in the query."
