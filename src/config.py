@@ -29,6 +29,16 @@ class CodeSearchConfig:
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
     reranker_model: str = "Qwen/Qwen3-Reranker-0.6B"
 
+    # ── Sentence-Transformers embedder options ──────────────────────────
+    # Query-side prefix required by some code embedders (e.g. CodeRankEmbed
+    # expects "Represent this query for searching relevant code: ").
+    st_query_prefix: str = ""
+    # Allow custom model code from the Hub (CodeRankEmbed, CodeSage, ...).
+    embedder_trust_remote_code: bool = False
+    # Extra kwargs for the model config, e.g. GTE-based models (SFR) need
+    # unpad_inputs/use_memory_efficient_attention disabled without xformers.
+    st_config_kwargs: Dict[str, object] = field(default_factory=dict)
+
     # ── Processing ──────────────────────────────────────────────────────
     batch_size: int = 16
     max_seq_length: int = 512
@@ -67,11 +77,20 @@ class CodeSearchConfig:
     # ── Reranker toggle ─────────────────────────────────────────────────
     enable_reranking: bool = True
 
+    # Query rewriting is opt-in to preserve the original retrieval behaviour.
+    enable_query_rewriting: bool = False
+    query_rewrite_strategy: str = "none"  # "none" | "rewrite" | "hyde"
+    query_rewriter_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
+    query_rewriter_max_new_tokens: int = 128
+
+    # Add the candidate's programming language to the reranker prompt.
+    reranker_language_hint: bool = False
+
     # ── Reranker prompt settings ────────────────────────────────────────
     # Token budget for the full reranker prompt (prefix + pair + suffix).
     # Kept separate from max_seq_length: Qwen3-Reranker handles long
     # contexts, while 512 would truncate most (query, code) pairs.
-    reranker_max_length: int = 2048
+    reranker_max_length: int = 512
     reranker_instruction: str = (
         "Given a natural-language search query, judge whether the code "
         "snippet implements the functionality described in the query."
@@ -90,6 +109,12 @@ class CodeSearchConfig:
     def __post_init__(self) -> None:
         """Validate recursive chunking limits before parser workers start."""
         self.validate_chunking()
+        if self.query_rewrite_strategy not in {"none", "rewrite", "hyde"}:
+            raise ValueError(
+                "query_rewrite_strategy must be one of: none, rewrite, hyde"
+            )
+        if self.query_rewriter_max_new_tokens <= 0:
+            raise ValueError("query_rewriter_max_new_tokens must be greater than zero")
 
     def validate_chunking(self) -> None:
         """Validate the current recursive chunking settings."""

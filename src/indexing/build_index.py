@@ -11,9 +11,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
-from tqdm import tqdm
 
 from config import CodeSearchConfig
+from console import create_progress
 from embedding.embedder import BaseEmbedder, create_embedder
 from indexing.faiss_index import FaissCodeIndex
 from parser.extract import CodeEntity, extract_entities
@@ -138,12 +138,15 @@ def build_index(
 
     with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {pool.submit(_process_file, a): a for a in file_args}
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Parsing"):
-            try:
-                entities = future.result()
-                all_entities.extend(entities)
-            except Exception:
-                logger.exception("Error processing file %s", futures[future])
+        with create_progress() as progress:
+            task = progress.add_task("Parsing", total=len(futures))
+            for future in as_completed(futures):
+                try:
+                    entities = future.result()
+                    all_entities.extend(entities)
+                except Exception:
+                    logger.exception("Error processing file %s", futures[future])
+                progress.advance(task)
 
     logger.info("Extracted %d code entities", len(all_entities))
     if not all_entities:
@@ -161,6 +164,9 @@ def build_index(
             batch_size=config.batch_size,
             query_instruction=config.query_instruction,
             torch_dtype=config.get_torch_dtype(),
+            query_prefix=config.st_query_prefix,
+            trust_remote_code=config.embedder_trust_remote_code,
+            config_kwargs=config.st_config_kwargs,
         )
 
     # 5. Embed all documents -------------------------------------------------

@@ -12,6 +12,7 @@ from typing import List, Optional, Tuple
 
 import torch
 
+from console import console, log_model_loaded, log_model_loading
 from parser.extract import CodeEntity
 
 logger = logging.getLogger(__name__)
@@ -83,6 +84,7 @@ class Qwen3Reranker(BaseReranker):
         batch_size: int = 16,
         torch_dtype: Optional[torch.dtype] = None,
         include_docstring: bool = True,
+        language_hint: bool = False,
         instruction: str = _DEFAULT_INSTRUCTION,
     ) -> None:
         from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -100,6 +102,7 @@ class Qwen3Reranker(BaseReranker):
         self._max_seq_length = max_seq_length
         self._batch_size = batch_size
         self._include_docstring = include_docstring
+        self._language_hint = language_hint
         self._instruction = instruction
 
         if torch_dtype is not None:
@@ -112,7 +115,7 @@ class Qwen3Reranker(BaseReranker):
         else:
             dtype = torch.float32
 
-        logger.info("Loading reranker model %s on %s (dtype=%s)", model_name, device, dtype)
+        log_model_loading(console, model_name, device, str(dtype))
         self._tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self._tokenizer.padding_side = "left"
         if self._tokenizer.pad_token is None:
@@ -124,6 +127,7 @@ class Qwen3Reranker(BaseReranker):
             trust_remote_code=True,
         ).to(self._device)
         self._model.eval()
+        log_model_loaded(console, model_name)
 
         # Resolve yes/no token ids
         self._yes_token_id = self._tokenizer.convert_tokens_to_ids("yes")
@@ -233,6 +237,7 @@ def create_reranker(
     enabled: bool = True,
     torch_dtype: Optional[torch.dtype] = None,
     include_docstring: bool = True,
+    language_hint: bool = False,
     instruction: str = _DEFAULT_INSTRUCTION,
 ) -> BaseReranker:
     """Instantiate the correct reranker based on *model_name*."""
@@ -240,10 +245,19 @@ def create_reranker(
         logger.info("Reranking disabled — using no-op reranker")
         return NoOpReranker()
 
-    if "qwen3-reranker" not in model_name.lower():
-        # Fallback: use Qwen3-Reranker for any unrecognised name
-        logger.warning("Unrecognised reranker model %s; defaulting to Qwen3-Reranker", model_name)
+    if "Qwen3-Reranker" in model_name or "qwen3-reranker" in model_name.lower():
+        return Qwen3Reranker(
+            model_name=model_name,
+            device=device,
+            max_seq_length=max_seq_length,
+            batch_size=batch_size,
+            torch_dtype=torch_dtype,
+            include_docstring=include_docstring,
+            language_hint=language_hint,
+        )
 
+    # Fallback: use Qwen3-Reranker for any unrecognised name
+    logger.warning("Unrecognised reranker model %s; defaulting to Qwen3-Reranker", model_name)
     return Qwen3Reranker(
         model_name=model_name,
         device=device,
@@ -251,5 +265,6 @@ def create_reranker(
         batch_size=batch_size,
         torch_dtype=torch_dtype,
         include_docstring=include_docstring,
+        language_hint=language_hint,
         instruction=instruction,
     )

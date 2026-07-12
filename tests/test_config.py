@@ -12,6 +12,26 @@ def test_default_config():
     assert config.top_k == 10
     assert config.index_type == "flat"
     assert config.enable_reranking is True
+    assert config.enable_query_rewriting is False
+    assert config.query_rewrite_strategy == "none"
+    assert config.reranker_language_hint is False
+
+
+def test_query_rewriting_from_yaml():
+    import yaml
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        yaml.dump({
+            "enable_query_rewriting": True,
+            "query_rewrite_strategy": "hyde",
+            "query_rewriter_max_new_tokens": 64,
+            "reranker_language_hint": True,
+        }, f)
+        f.flush()
+        config = CodeSearchConfig.from_yaml(f.name)
+    assert config.enable_query_rewriting is True
+    assert config.query_rewrite_strategy == "hyde"
+    assert config.query_rewriter_max_new_tokens == 64
+    assert config.reranker_language_hint is True
 
 
 def test_reranker_prompt_defaults():

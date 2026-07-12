@@ -6,13 +6,18 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, List, Optional
+
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.text import Text
 
 from config import CodeSearchConfig
 from embedding.embedder import BaseEmbedder, create_embedder
 from indexing.faiss_index import FaissCodeIndex
 from parser.extract import CodeEntity
+from retrieval.query_rewriter import BaseQueryRewriter, create_query_rewriter
 from retrieval.reranker import BaseReranker, create_reranker
 
 logger = logging.getLogger(__name__)
@@ -42,6 +47,37 @@ class SearchResult:
         for line in self.entity.source_code.splitlines():
             lines.append(f"    {line}")
         return "\n".join(lines)
+
+    def to_rich(self) -> Panel:
+        """Render as a Rich Panel with syntax-highlighted code."""
+        if self.final_score >= 0.8:
+            score_color = "bold green"
+        elif self.final_score >= 0.5:
+            score_color = "yellow"
+        else:
+            score_color = "red"
+
+        meta_parts = [
+            f"[{score_color}]Score:     {self.final_score:.4f}[/]",
+            f"[bold]File:      [/]{self.entity.file_path}",
+            f"[bold]Function:  [/]{self.entity.identifier}",
+            f"[bold]Language:  [/]{self.entity.language.capitalize()}",
+            f"[bold]Lines:     [/]{self.entity.start_line}\u2013{self.entity.end_line}",
+        ]
+        if self.reranker_score is not None:
+            meta_parts.append(
+                f"[dim]Reranker:  {self.reranker_score:.4f}  |  "
+                f"Embed: {self.embedding_similarity:.4f}  |  "
+                f"Meta: {self.metadata_bonus:.4f}[/]"
+            )
+
+        lang = self.entity.language or "python"
+        code = self.entity.source_code.rstrip()
+        syntax = Syntax(code, lang, theme="monokai", line_numbers=False, word_wrap=True)
+
+        content = "\n".join(meta_parts) + "\n" + str(syntax)
+        title = Text("Result", style="bold cyan")
+        return Panel(content, title=title, border_style="bright_blue", padding=(0, 1))
 
 
 # ── Metadata bonus ──────────────────────────────────────────────────────
@@ -97,11 +133,13 @@ class SearchEngine:
         embedder: Optional[BaseEmbedder] = None,
         reranker: Optional[BaseReranker] = None,
         index: Optional[FaissCodeIndex] = None,
+        query_rewriter: Optional[BaseQueryRewriter] = None,
     ) -> None:
         self._config = config
         self._embedder = embedder
         self._reranker = reranker
         self._index = index
+        self._query_rewriter = query_rewriter
         self._language_indexes: Dict[str, FaissCodeIndex] = {}
         self._manifest_loaded = False
 
@@ -116,6 +154,9 @@ class SearchEngine:
                 batch_size=self._config.batch_size,
                 query_instruction=self._config.query_instruction,
                 torch_dtype=self._config.get_torch_dtype(),
+                query_prefix=self._config.st_query_prefix,
+                trust_remote_code=self._config.embedder_trust_remote_code,
+                config_kwargs=self._config.st_config_kwargs,
             )
         return self._embedder
 
@@ -129,9 +170,22 @@ class SearchEngine:
                 enabled=self._config.enable_reranking,
                 torch_dtype=self._config.get_torch_dtype(),
                 include_docstring=self._config.include_docstring,
+                language_hint=self._config.reranker_language_hint,
                 instruction=self._config.reranker_instruction,
             )
         return self._reranker
+
+    def _ensure_query_rewriter(self) -> BaseQueryRewriter:
+        if self._query_rewriter is None:
+            self._query_rewriter = create_query_rewriter(
+                enabled=self._config.enable_query_rewriting,
+                strategy=self._config.query_rewrite_strategy,
+                model_name=self._config.query_rewriter_model,
+                device=self._config.device,
+                max_new_tokens=self._config.query_rewriter_max_new_tokens,
+                torch_dtype=self._config.get_torch_dtype(),
+            )
+        return self._query_rewriter
 
     def _ensure_index(self) -> FaissCodeIndex:
         if self._index is None:
@@ -203,6 +257,10 @@ class SearchEngine:
         """
         k = top_k or self._config.top_k
         w = self._config.weights
+        original_query = query
+        query = self._ensure_query_rewriter().rewrite(original_query)
+        if query != original_query:
+            logger.info("Rewritten query: %r -> %r", original_query, query)
         embedder = self._ensure_embedder()
 
         # 1. Embed query

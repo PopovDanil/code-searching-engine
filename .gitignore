@@ -221,3 +221,13 @@ __marimo__/
 artifacts/
 
 index/
+
+# Generated FAISS indexes and local experiment artifacts
+index*/
+index_colab*/
+*.faiss
+*.pkl
+
+# Notebook / Colab artifacts
+.ipynb_checkpoints/
+.cache/

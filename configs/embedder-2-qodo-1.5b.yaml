@@ -1,0 +1,10 @@
+# Qodo-Embed-1-1.5B — сильнейший открытый код-эмбеддер (CoIR ~68.5).
+# ВАЖНО: trust_remote_code выключен — их кастомный modeling_qwen.py несовместим
+# со свежим transformers (нет rope_theta), а архитектура — обычный Qwen2,
+# который transformers умеет нативно.
+embedding_model: "Qodo/Qodo-Embed-1-1.5B"
+embedder_trust_remote_code: false
+enable_reranking: false
+device: "cuda"
+batch_size: 16
+index_dir: "index_qodo_15b"

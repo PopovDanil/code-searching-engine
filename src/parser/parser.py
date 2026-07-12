@@ -75,7 +75,7 @@ SUPPORTED_LANGUAGES: Dict[str, LangInfo] = {
         function_nodes=("function_definition",),
         method_nodes=("method_declaration",),
         class_nodes=("class_declaration",),
-        language_fn="language_php",  # use the PHP-only grammar
+        language_fn="language_php_only",  # standalone snippets (no <?php tag)
     ),
 }
 

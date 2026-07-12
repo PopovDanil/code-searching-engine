@@ -214,6 +214,13 @@ Runs a paired-row proxy evaluation against the CodeSearchNet dataset.
 Reports Recall@k, MRR, and NDCG at parent-function level. The first run
 downloads the dataset and models.
 
+Query rewriting is opt-in. Set `enable_query_rewriting: true` and choose
+`query_rewrite_strategy: "rewrite"` or `"hyde"`; the small rewriter model is
+loaded lazily on the first search. `reranker_language_hint: true` adds the
+candidate's programming language to the reranker prompt and has no effect when
+reranking is disabled. Both features are disabled by default, so existing
+search and evaluation commands preserve their previous behavior.
+
 | Option | Description |
 |---|---|
 | `--config`, `-c` | YAML config file |

@@ -20,6 +20,8 @@ from typing import List, Optional
 import numpy as np
 import torch
 
+from console import console, log_model_loaded, log_model_loading
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,7 +119,7 @@ class Qwen3Embedder(BaseEmbedder):
 
         dtype = torch_dtype or (torch.float16 if self._device.type == "cuda" else torch.float32)
 
-        logger.info("Loading embedding model %s on %s (dtype=%s)", model_name, device, dtype)
+        log_model_loading(console, model_name, device, str(dtype))
         self._tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self._model = AutoModel.from_pretrained(
             model_name,
@@ -125,6 +127,7 @@ class Qwen3Embedder(BaseEmbedder):
             trust_remote_code=True,
         ).to(self._device)
         self._model.eval()
+        log_model_loaded(console, model_name)
 
         # Determine dimension from a dummy forward pass
         self._dim: Optional[int] = None
@@ -190,6 +193,9 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         device: str = "auto",
         batch_size: int = 64,
+        query_prefix: str = "",
+        trust_remote_code: bool = False,
+        config_kwargs: Optional[dict] = None,
     ) -> None:
         from sentence_transformers import SentenceTransformer
 
@@ -198,9 +204,20 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 
         self._device = device
         self._batch_size = batch_size
-        logger.info("Loading sentence-transformers model %s on %s", model_name, device)
-        self._model = SentenceTransformer(model_name, device=device)
-        self._dim: int = self._model.get_sentence_embedding_dimension()
+        # Some code embedders (e.g. CodeRankEmbed) were trained with a fixed
+        # query-side prefix; without it their retrieval quality degrades.
+        self._query_prefix = query_prefix
+        log_model_loading(console, model_name, device, "default")
+        self._model = SentenceTransformer(
+            model_name,
+            device=device,
+            trust_remote_code=trust_remote_code,
+            config_kwargs=config_kwargs or None,
+        )
+        # sentence-transformers >= 5.x renamed the method
+        get_dim = getattr(self._model, "get_embedding_dimension", None)
+        self._dim: int = get_dim() if get_dim else self._model.get_sentence_embedding_dimension()
+        log_model_loaded(console, model_name)
 
     @property
     def dimension(self) -> int:
@@ -216,8 +233,9 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         return np.asarray(embeddings, dtype=np.float32)
 
     def embed_query(self, query: str) -> np.ndarray:
+        text = f"{self._query_prefix}{query}" if self._query_prefix else query
         emb = self._model.encode(
-            [query],
+            [text],
             normalize_embeddings=True,
             show_progress_bar=False,
         )
@@ -233,6 +251,9 @@ def create_embedder(
     batch_size: int = 16,
     query_instruction: str = "Retrieve relevant source code based on the user query",
     torch_dtype: Optional[torch.dtype] = None,
+    query_prefix: str = "",
+    trust_remote_code: bool = False,
+    config_kwargs: Optional[dict] = None,
 ) -> BaseEmbedder:
     """Instantiate the correct embedder based on *model_name*.
 
@@ -254,6 +275,9 @@ def create_embedder(
             model_name=model_name,
             device=device,
             batch_size=batch_size,
+            query_prefix=query_prefix,
+            trust_remote_code=trust_remote_code,
+            config_kwargs=config_kwargs,
         )
     except ImportError:
         raise ImportError(

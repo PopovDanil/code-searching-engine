@@ -2,24 +2,21 @@
 
 from __future__ import annotations
 
-import logging
 import sys
 from typing import List, Optional
 
 import typer
 
+from console import (
+    console,
+    render_error,
+    render_evaluation_table,
+    render_index_summary,
+    render_search_result,
+    setup_logging,
+)
+
 app = typer.Typer(help="Semantic code search CLI")
-
-
-def _setup_logging(verbose: bool = False) -> None:
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
-    for name in ("httpx", "httpcore", "urllib3"):
-        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 @app.command()
@@ -34,8 +31,7 @@ def index(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Index a repository for semantic search."""
-    _setup_logging(verbose)
-    logger = logging.getLogger("codesearch.cli")
+    setup_logging(verbose)
 
     from config import CodeSearchConfig
 
@@ -57,15 +53,26 @@ def index(
 
     from indexing.build_index import build_index
 
-    logger.info("Indexing repository: %s", repository_path)
+    console.print(f"\n[bold]\\U0001f4c2[/] Indexing repository: [cyan]{repository_path}[/]\n")
     try:
         faiss_index = build_index(repository_path, config)
         if faiss_index is not None:
-            logger.info("Index built successfully (%d vectors)", faiss_index.ntotal)
+            panel = render_index_summary(
+                path=config.index_dir,
+                vectors=faiss_index.ntotal,
+                dimension=faiss_index.dimension,
+            )
+            console.print(panel)
         else:
-            logger.info("Separate per-language indexes built successfully")
+            console.print(
+                render_index_summary(
+                    path=config.index_dir,
+                    vectors=0,
+                    dimension=0,
+                )
+            )
     except Exception as e:
-        typer.echo(f"Error: {e}", err=True)
+        console.print(render_error(str(e)))
         sys.exit(1)
 
 
@@ -79,8 +86,7 @@ def search(
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Search indexed code semantically."""
-    _setup_logging(verbose)
-    logger = logging.getLogger("codesearch.cli")
+    setup_logging(verbose)
 
     from config import CodeSearchConfig
 
@@ -101,18 +107,20 @@ def search(
     try:
         results = engine.search(query, top_k=config.top_k, language=language)
     except FileNotFoundError:
-        typer.echo("Error: No index found. Run 'index' command first.", err=True)
+        console.print(render_error("No index found. Run [bold]'index'[/] command first."))
         sys.exit(1)
 
     if not results:
-        typer.echo("No results found.")
+        console.print("[yellow]No results found.[/]")
         return
 
-    typer.echo(f"\nResults for: \"{query}\"\n")
+    console.print()
+    console.rule(f'[bold cyan]Results for: [white]"{query}"[/][/]')
+    console.print()
     for i, result in enumerate(results, 1):
-        typer.echo(f"--- Result {i} ---")
-        typer.echo(str(result))
-        typer.echo()
+        panel = render_search_result(i, result)
+        console.print(panel)
+        console.print()
 
 
 @app.command()
@@ -121,11 +129,15 @@ def evaluate(
     max_queries: Optional[int] = typer.Option(None, "--max-queries", help="Max evaluation queries per language"),
     max_dataset_records: Optional[int] = typer.Option(None, "--max-dataset-records", help="Total records across all languages to load into the database"),
     separate_indexes: Optional[bool] = typer.Option(None, "--separate-indexes", "-s", help="Build separate per-language indexes (default: combined)"),
+    rewrite: Optional[bool] = typer.Option(None, "--rewrite", "-r", help="Enable query rewriting"),
+    rewrite_strategy: Optional[str] = typer.Option(None, "--rewrite-strategy", help="Rewrite strategy: rewrite or hyde"),
+    rewrite_model: Optional[str] = typer.Option(None, "--rewrite-model", help="Query rewriter model name"),
+    reranker_hint: Optional[bool] = typer.Option(None, "--reranker-hint", help="Add language hint to reranker prompt"),
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="YAML config file"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Evaluate on CodeSearchNet benchmark."""
-    _setup_logging(verbose)
+    setup_logging(verbose)
 
     from config import CodeSearchConfig
 
@@ -136,8 +148,15 @@ def evaluate(
 
     if separate_indexes is not None:
         config.separate_indexes = separate_indexes
+    if rewrite is not None:
+        config.enable_query_rewriting = rewrite
+    if rewrite_strategy is not None:
+        config.query_rewrite_strategy = rewrite_strategy
+    if rewrite_model is not None:
+        config.query_rewriter_model = rewrite_model
+    if reranker_hint is not None:
+        config.reranker_language_hint = reranker_hint
 
-    # CLI --max-queries overrides config max_dataset_records (per-language query cap)
     effective_max_queries = max_queries
     effective_max_dataset_records = max_dataset_records or config.max_dataset_records
 
@@ -152,11 +171,10 @@ def evaluate(
         max_dataset_records=effective_max_dataset_records,
     )
 
-    typer.echo("\nEvaluation Results:")
-    for lang, metrics in results.items():
-        typer.echo(f"\n  {lang}:")
-        for metric, val in metrics.items():
-            typer.echo(f"    {metric}: {val:.4f}")
+    console.print()
+    table = render_evaluation_table(results)
+    console.print(table)
+    console.print()
 
 
 if __name__ == "__main__":
