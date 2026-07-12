@@ -65,6 +65,7 @@ class Qwen3Reranker(BaseReranker):
         batch_size: int = 16,
         torch_dtype: Optional[torch.dtype] = None,
         include_docstring: bool = True,
+        language_hint: bool = False,
     ) -> None:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -81,6 +82,7 @@ class Qwen3Reranker(BaseReranker):
         self._max_seq_length = max_seq_length
         self._batch_size = batch_size
         self._include_docstring = include_docstring
+        self._language_hint = language_hint
 
         if torch_dtype is not None:
             dtype = torch_dtype
@@ -111,14 +113,22 @@ class Qwen3Reranker(BaseReranker):
 
     # ── internal ─────────────────────────────────────────────────────────
 
-    def _format_prompt(self, query: str, document: str) -> str:
+    def _format_prompt(
+        self, query: str, document: str, language: Optional[str] = None,
+    ) -> str:
         """Build the chat prompt for the reranker."""
+        language_line = ""
+        if self._language_hint and language:
+            language_line = (
+                f"The document is source code written in {language.capitalize()}.\n"
+            )
         return (
             "<|im_start|>system\n"
             'Judge whether the Document is relevant to the Query. Answer only "yes" or "no".'
             "<|im_end|>\n"
             "<|im_start|>user\n"
             f"<Query>{query}</Query>\n"
+            f"{language_line}"
             f"<Document>{document}</Document>"
             "<|im_end|>\n"
             "<|im_start|>assistant\n"
@@ -161,7 +171,11 @@ class Qwen3Reranker(BaseReranker):
         for start in range(0, len(candidates), bs):
             batch = candidates[start : start + bs]
             prompts = [
-                self._format_prompt(query, ent.to_structured_text(include_docstring=self._include_docstring))
+                self._format_prompt(
+                    query,
+                    ent.to_structured_text(include_docstring=self._include_docstring),
+                    ent.language,
+                )
                 for ent, _ in batch
             ]
             scores = self._score_batch(prompts)
@@ -196,6 +210,7 @@ def create_reranker(
     enabled: bool = True,
     torch_dtype: Optional[torch.dtype] = None,
     include_docstring: bool = True,
+    language_hint: bool = False,
 ) -> BaseReranker:
     """Instantiate the correct reranker based on *model_name*."""
     if not enabled:
@@ -210,6 +225,7 @@ def create_reranker(
             batch_size=batch_size,
             torch_dtype=torch_dtype,
             include_docstring=include_docstring,
+            language_hint=language_hint,
         )
 
     # Fallback: use Qwen3-Reranker for any unrecognised name
@@ -221,4 +237,5 @@ def create_reranker(
         batch_size=batch_size,
         torch_dtype=torch_dtype,
         include_docstring=include_docstring,
+        language_hint=language_hint,
     )

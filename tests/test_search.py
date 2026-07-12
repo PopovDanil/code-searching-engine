@@ -8,6 +8,8 @@ import numpy as np
 from retrieval.search import _compute_metadata_bonus, SearchResult
 from parser.extract import CodeEntity
 from indexing.faiss_index import FaissCodeIndex
+from retrieval.reranker import NoOpReranker
+from retrieval.query_rewriter import NoOpQueryRewriter
 
 
 def _make_entity(function_name="test_func", class_name=None, docstring=None, language="python"):
@@ -60,6 +62,44 @@ def test_metadata_bonus_max_1():
     )
     bonus = _compute_metadata_bonus(entity, "read json")
     assert bonus <= 1.0
+
+
+def test_noop_query_rewriter_preserves_query():
+    assert NoOpQueryRewriter().rewrite("read json") == "read json"
+
+
+def test_search_uses_rewritten_query_for_embedding_and_metadata():
+    from config import CodeSearchConfig
+    from retrieval.search import SearchEngine
+
+    class FakeRewriter:
+        def rewrite(self, query):
+            assert query == "original"
+            return "read json"
+
+    class FakeEmbedder:
+        def __init__(self):
+            self.query = None
+
+        def embed_query(self, query):
+            self.query = query
+            return np.array([1.0, 0.0], dtype=np.float32)
+
+    entity = _make_entity(function_name="read_json")
+    index = FaissCodeIndex(dimension=2, index_type="flat")
+    index.build(np.array([[1.0, 0.0]], dtype=np.float32), [entity])
+    embedder = FakeEmbedder()
+    engine = SearchEngine(
+        config=CodeSearchConfig(enable_reranking=False),
+        embedder=embedder,
+        reranker=NoOpReranker(),
+        query_rewriter=FakeRewriter(),
+        index=index,
+    )
+
+    results = engine.search("original")
+    assert embedder.query == "read json"
+    assert results[0].metadata_bonus >= 0.4
 
 
 def test_search_engine_loads_manifest():

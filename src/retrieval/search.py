@@ -14,6 +14,7 @@ from embedding.embedder import BaseEmbedder, create_embedder
 from indexing.faiss_index import FaissCodeIndex
 from parser.extract import CodeEntity
 from retrieval.reranker import BaseReranker, create_reranker
+from retrieval.query_rewriter import BaseQueryRewriter, create_query_rewriter
 
 logger = logging.getLogger(__name__)
 
@@ -97,11 +98,13 @@ class SearchEngine:
         embedder: Optional[BaseEmbedder] = None,
         reranker: Optional[BaseReranker] = None,
         index: Optional[FaissCodeIndex] = None,
+        query_rewriter: Optional[BaseQueryRewriter] = None,
     ) -> None:
         self._config = config
         self._embedder = embedder
         self._reranker = reranker
         self._index = index
+        self._query_rewriter = query_rewriter
         self._language_indexes: Dict[str, FaissCodeIndex] = {}
         self._manifest_loaded = False
 
@@ -129,8 +132,21 @@ class SearchEngine:
                 enabled=self._config.enable_reranking,
                 torch_dtype=self._config.get_torch_dtype(),
                 include_docstring=self._config.include_docstring,
+                language_hint=self._config.reranker_language_hint,
             )
         return self._reranker
+
+    def _ensure_query_rewriter(self) -> BaseQueryRewriter:
+        if self._query_rewriter is None:
+            self._query_rewriter = create_query_rewriter(
+                enabled=self._config.enable_query_rewriting,
+                strategy=self._config.query_rewrite_strategy,
+                model_name=self._config.query_rewriter_model,
+                device=self._config.device,
+                max_new_tokens=self._config.query_rewriter_max_new_tokens,
+                torch_dtype=self._config.get_torch_dtype(),
+            )
+        return self._query_rewriter
 
     def _ensure_index(self) -> FaissCodeIndex:
         if self._index is None:
@@ -202,6 +218,10 @@ class SearchEngine:
         """
         k = top_k or self._config.top_k
         w = self._config.weights
+        original_query = query
+        query = self._ensure_query_rewriter().rewrite(original_query)
+        if query != original_query:
+            logger.info("Rewritten query: %r -> %r", original_query, query)
         embedder = self._ensure_embedder()
 
         # 1. Embed query

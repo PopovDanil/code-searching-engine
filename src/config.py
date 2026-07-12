@@ -64,6 +64,15 @@ class CodeSearchConfig:
     # ── Reranker toggle ─────────────────────────────────────────────────
     enable_reranking: bool = True
 
+    # Query rewriting is opt-in to preserve the original retrieval behaviour.
+    enable_query_rewriting: bool = False
+    query_rewrite_strategy: str = "none"  # "none" | "rewrite" | "hyde"
+    query_rewriter_model: str = "HuggingFaceTB/SmolLM2-135M-Instruct"
+    query_rewriter_max_new_tokens: int = 128
+
+    # Add the candidate's programming language to the reranker prompt.
+    reranker_language_hint: bool = False
+
     # ── Docstring inclusion in structured text ──────────────────────────
     include_docstring: bool = True
 
@@ -77,6 +86,12 @@ class CodeSearchConfig:
     def __post_init__(self) -> None:
         """Validate recursive chunking limits before parser workers start."""
         self.validate_chunking()
+        if self.query_rewrite_strategy not in {"none", "rewrite", "hyde"}:
+            raise ValueError(
+                "query_rewrite_strategy must be one of: none, rewrite, hyde"
+            )
+        if self.query_rewriter_max_new_tokens <= 0:
+            raise ValueError("query_rewriter_max_new_tokens must be greater than zero")
 
     def validate_chunking(self) -> None:
         """Validate the current recursive chunking settings."""
