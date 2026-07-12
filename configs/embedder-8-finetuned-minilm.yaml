@@ -1,7 +1,0 @@
-# Дообученный на CodeSearchNet MiniLM (см. colab_finetune.ipynb).
-# Путь указывает на локальную папку с моделью, сохранённой ноутбуком дообучения.
-embedding_model: "./finetuned-minilm-code"
-enable_reranking: false
-device: "cuda"
-batch_size: 64
-index_dir: "index_finetuned_minilm"
