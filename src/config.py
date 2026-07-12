@@ -48,6 +48,12 @@ class CodeSearchConfig:
     top_k: int = 10
     retrieval_top_k: int = 50  # candidates fetched before reranking
 
+    # ── Hybrid retrieval (BM25 + dense via RRF) ─────────────────────────
+    enable_hybrid: bool = False
+    hybrid_rrf_k: int = 60          # RRF damping constant
+    hybrid_dense_weight: float = 1.0
+    hybrid_bm25_weight: float = 1.0
+
     # ── Dataset / Evaluation ────────────────────────────────────────────
     max_dataset_records: Optional[int] = None  # total records across all languages to load into the database (None = all)
 

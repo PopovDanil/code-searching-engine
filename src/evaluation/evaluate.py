@@ -485,6 +485,15 @@ def evaluate_on_codesearchnet(
         )
         combined_index.build(embeddings, combined_entities)
 
+        # Sparse arm for hybrid retrieval (BM25 over the same corpus/entities).
+        combined_bm25 = None
+        if config.enable_hybrid:
+            from retrieval.bm25_index import BM25Index
+
+            combined_bm25 = BM25Index()
+            combined_bm25.build(texts, combined_entities)
+            logger.info("Built BM25 index for hybrid retrieval (%d docs)", combined_bm25.size)
+
     # ═══════════════════════════════════════════════════════════════
     # Phase 3: Run queries and compute metrics
     # ═══════════════════════════════════════════════════════════════
@@ -532,7 +541,11 @@ def evaluate_on_codesearchnet(
                 query_limit, len(all_queries), lang,
             )
 
-            engine = SearchEngine(config=evaluation_config, index=combined_index)
+            engine = SearchEngine(
+                config=evaluation_config,
+                index=combined_index,
+                bm25_index=combined_bm25,
+            )
 
             for qi, (query, relevant_parent) in enumerate(
                 tqdm(selected_queries, desc=f"Searching {lang}")

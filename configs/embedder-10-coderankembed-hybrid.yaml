@@ -1,0 +1,13 @@
+# Гибрид BM25 + dense (RRF) поверх CodeRankEmbed.
+# Сравнивать с embedder-5 (dense-only, тот же эмбеддер).
+embedding_model: "nomic-ai/CodeRankEmbed"
+embedder_trust_remote_code: true
+st_query_prefix: "Represent this query for searching relevant code: "
+enable_reranking: false
+enable_hybrid: true
+hybrid_rrf_k: 60
+hybrid_dense_weight: 1.0
+hybrid_bm25_weight: 1.0
+device: "cuda"
+batch_size: 32
+index_dir: "index_coderankembed_hybrid"

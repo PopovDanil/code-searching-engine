@@ -1,0 +1,8 @@
+# sentence-t5-base (110M) БЕЗ дообучения — база модели, которую проект
+# sturdy-dev/semantic-code-search дообучал на CodeSearchNet. Здесь берём её
+# как есть, чтобы увидеть точку отсчёта «до дообучения».
+embedding_model: "sentence-transformers/sentence-t5-base"
+enable_reranking: false
+device: "cuda"
+batch_size: 32
+index_dir: "index_t5_base"

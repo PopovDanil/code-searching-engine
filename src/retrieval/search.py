@@ -97,11 +97,13 @@ class SearchEngine:
         embedder: Optional[BaseEmbedder] = None,
         reranker: Optional[BaseReranker] = None,
         index: Optional[FaissCodeIndex] = None,
+        bm25_index=None,
     ) -> None:
         self._config = config
         self._embedder = embedder
         self._reranker = reranker
         self._index = index
+        self._bm25_index = bm25_index  # sparse arm for hybrid retrieval
         self._language_indexes: Dict[str, FaissCodeIndex] = {}
         self._manifest_loaded = False
 
@@ -213,11 +215,11 @@ class SearchEngine:
         query_vec = embedder.embed_query(query)
         logger.info("Query embedding latency: %.2f ms", (time.perf_counter() - t0) * 1000)
 
-        # 2. FAISS retrieval
+        # 2. Retrieval (dense, or hybrid BM25+dense via RRF)
         t0 = time.perf_counter()
-        candidates = self._retrieve_candidates(query_vec, language)
+        candidates = self._retrieve_candidates(query, query_vec, language)
         logger.info(
-            "FAISS search latency: %.2f ms (candidates=%d)",
+            "Retrieval latency: %.2f ms (candidates=%d)",
             (time.perf_counter() - t0) * 1000,
             len(candidates),
         )
@@ -262,14 +264,57 @@ class SearchEngine:
 
     def _retrieve_candidates(
         self,
+        query: str,
         query_vec,
         language: Optional[str] = None,
     ):
-        """Retrieve candidates from FAISS, supporting both index modes."""
+        """Retrieve candidates, optionally fusing BM25 + dense via RRF."""
+        if self._config.enable_hybrid and self._bm25_index is not None:
+            return self._retrieve_hybrid(query, query_vec, language)
         if self._config.separate_indexes:
             return self._retrieve_separate(query_vec, language)
         faiss_idx = self._ensure_index()
         return faiss_idx.search(query_vec, top_k=self._config.retrieval_top_k)
+
+    def _retrieve_hybrid(
+        self,
+        query: str,
+        query_vec,
+        language: Optional[str] = None,
+    ):
+        """Fuse dense (FAISS) and sparse (BM25) candidate lists with RRF.
+
+        Returns ``(entity, rrf_score)`` pairs.  With reranking disabled the
+        RRF score drives the final ranking; with reranking enabled these are
+        simply the candidate pool handed to the cross-encoder.
+        """
+        from retrieval.fusion import reciprocal_rank_fusion
+
+        n = self._config.retrieval_top_k
+        if self._config.separate_indexes:
+            dense = self._retrieve_separate(query_vec, language)
+        else:
+            dense = self._ensure_index().search(query_vec, top_k=n)
+        sparse = self._bm25_index.search(query, top_k=n)
+
+        # Map object identity -> entity so we can fuse by id and recover objects.
+        id_to_entity = {}
+        for ent, _ in dense:
+            id_to_entity[id(ent)] = ent
+        for ent, _ in sparse:
+            id_to_entity[id(ent)] = ent
+
+        dense_ids = [id(ent) for ent, _ in dense]
+        sparse_ids = [id(ent) for ent, _ in sparse]
+        fused = reciprocal_rank_fusion(
+            [dense_ids, sparse_ids],
+            k=self._config.hybrid_rrf_k,
+            weights=[
+                self._config.hybrid_dense_weight,
+                self._config.hybrid_bm25_weight,
+            ],
+        )
+        return [(id_to_entity[i], score) for i, score in fused[:n]]
 
     def _retrieve_separate(
         self,
