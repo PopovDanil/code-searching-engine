@@ -207,7 +207,9 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         self._model = SentenceTransformer(
             model_name, device=device, trust_remote_code=trust_remote_code
         )
-        self._dim: int = self._model.get_sentence_embedding_dimension()
+        # sentence-transformers >= 5.x renamed the method
+        get_dim = getattr(self._model, "get_embedding_dimension", None)
+        self._dim: int = get_dim() if get_dim else self._model.get_sentence_embedding_dimension()
 
     @property
     def dimension(self) -> int:
