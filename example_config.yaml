@@ -31,6 +31,11 @@ device: "auto"          # "auto", "cpu", "cuda"
 # ── Dataset / Evaluation ────────────────────────────────────────────
 max_dataset_records: null  # total records across all languages to load into DB (null = all)
                            # cached to {index_dir}/eval_cache/ after first run
+evaluation_primary_split: "test"
+evaluation_fill_split: "train"
+evaluation_fill_from_split: false
+evaluation_deduplicate: true
+evaluation_train_as_queries: false
 
 # ── Scoring weights ─────────────────────────────────────────────────
 weights:

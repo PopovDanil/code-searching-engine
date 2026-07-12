@@ -133,6 +133,11 @@ def evaluate(
     rewrite_strategy: Optional[str] = typer.Option(None, "--rewrite-strategy", help="Rewrite strategy: rewrite or hyde"),
     rewrite_model: Optional[str] = typer.Option(None, "--rewrite-model", help="Query rewriter model name"),
     reranker_hint: Optional[bool] = typer.Option(None, "--reranker-hint", help="Add language hint to reranker prompt"),
+    primary_split: Optional[str] = typer.Option(None, "--primary-split", help="Primary CodeSearchNet split used for corpus and queries"),
+    fill_split: Optional[str] = typer.Option(None, "--fill-split", help="Secondary split used to fill the evaluation corpus"),
+    fill_from_split: Optional[bool] = typer.Option(None, "--fill-from-split", help="Fill the corpus from a secondary split"),
+    no_deduplicate: bool = typer.Option(False, "--no-deduplicate", help="Allow duplicate functions across evaluation splits"),
+    train_as_queries: Optional[bool] = typer.Option(None, "--train-as-queries", help="Use fill-split records as evaluation queries"),
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="YAML config file"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -156,6 +161,16 @@ def evaluate(
         config.query_rewriter_model = rewrite_model
     if reranker_hint is not None:
         config.reranker_language_hint = reranker_hint
+    if primary_split is not None:
+        config.evaluation_primary_split = primary_split
+    if fill_split is not None:
+        config.evaluation_fill_split = fill_split
+    if fill_from_split is not None:
+        config.evaluation_fill_from_split = fill_from_split
+    if no_deduplicate:
+        config.evaluation_deduplicate = False
+    if train_as_queries is not None:
+        config.evaluation_train_as_queries = train_as_queries
 
     effective_max_queries = max_queries
     effective_max_dataset_records = max_dataset_records or config.max_dataset_records

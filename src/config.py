@@ -53,6 +53,11 @@ class CodeSearchConfig:
 
     # ── Dataset / Evaluation ────────────────────────────────────────────
     max_dataset_records: Optional[int] = None  # total records across all languages to load into the database (None = all)
+    evaluation_primary_split: str = "test"
+    evaluation_fill_split: str = "train"
+    evaluation_fill_from_split: bool = False
+    evaluation_deduplicate: bool = True
+    evaluation_train_as_queries: bool = False
 
     # ── Index ───────────────────────────────────────────────────────────
     index_type: str = "flat"  # "flat" | "hnsw"

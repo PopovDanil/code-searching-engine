@@ -97,3 +97,33 @@ candidates=0
 ```
 
 the run is invalid and should not be used for metrics.
+
+## Large CodeSearchNet evaluation index
+
+The default evaluation uses a single split, usually the test split.
+
+For larger-scale evaluation, the index can be built from the full primary
+split plus additional examples from another split:
+
+```bash
+python src/cli.py evaluate \
+  --config configs/colab_language_hint.yaml \
+  --languages python \
+  --max-dataset-records 500000 \
+  --max-queries 50 \
+  --primary-split test \
+  --fill-split train \
+  --fill-from-split
+```
+
+In this mode, test examples are used both as indexed corpus documents and as
+evaluation queries. Train examples are added only as additional indexed corpus
+documents by default. They are not used as evaluation queries unless
+`--train-as-queries` is explicitly passed.
+
+Deduplication is enabled by default to avoid adding the same function twice if
+CodeSearchNet splits overlap. Pass `--no-deduplicate` only when an experiment
+explicitly requires duplicate corpus records.
+
+`500000` means target records before chunking. The number of indexed FAISS
+vectors may be larger because one function can produce multiple chunks.
