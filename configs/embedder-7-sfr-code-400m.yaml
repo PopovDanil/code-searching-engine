@@ -1,6 +1,6 @@
-# SFR-Embedding-Code-400M_R (Salesforce Research, семейство CodeXEmbed — SOTA на CoIR).
-# Построена на GTE (Alibaba): их unpadded-attention без xformers даёт CUDA assert
-# на T4, поэтому отключаем этот путь через config_kwargs.
+# SFR-Embedding-Code-400M_R (Salesforce Research, семейство CodeXEmbed/GTE — SOTA на CoIR).
+# trust_remote_code=True. GTE-код на T4 без xformers даёт CUDA assert в rotary —
+# отключаем unpad/mem-efficient attention. Малый batch на всякий случай.
 embedding_model: "Salesforce/SFR-Embedding-Code-400M_R"
 embedder_trust_remote_code: true
 st_config_kwargs:
@@ -8,5 +8,5 @@ st_config_kwargs:
   use_memory_efficient_attention: false
 enable_reranking: false
 device: "cuda"
-batch_size: 32
+batch_size: 16
 index_dir: "index_sfr_400m"

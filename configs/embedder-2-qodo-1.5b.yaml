@@ -1,10 +1,12 @@
-# Qodo-Embed-1-1.5B — сильнейший открытый код-эмбеддер (CoIR ~68.5).
-# ВАЖНО: trust_remote_code выключен — их кастомный modeling_qwen.py несовместим
-# со свежим transformers (нет rope_theta), а архитектура — обычный Qwen2,
-# который transformers умеет нативно.
+# Qodo-Embed-1-1.5B — дообученная gte-Qwen2-1.5B-instruct (семейство GTE, CoIR ~68.5).
+# Карточка требует trust_remote_code=True. GTE-код требует отключить unpad/mem-efficient
+# attention без xformers. Малый batch — 1.5B на T4 иначе ловит OOM.
 embedding_model: "Qodo/Qodo-Embed-1-1.5B"
-embedder_trust_remote_code: false
+embedder_trust_remote_code: true
+st_config_kwargs:
+  unpad_inputs: false
+  use_memory_efficient_attention: false
 enable_reranking: false
 device: "cuda"
-batch_size: 16
+batch_size: 8
 index_dir: "index_qodo_15b"
