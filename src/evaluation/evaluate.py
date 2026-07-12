@@ -458,9 +458,14 @@ def evaluate_on_codesearchnet(
         combined_entities: List[CodeEntity] = []
         combined_entity_to_parent: Dict[int, int] = {}
         combined_queries: List[Tuple[str, int]] = []
+        # Per-language parent-id offsets: entity parent ids are globalised
+        # below, so query-side ids must be shifted by the same amount when
+        # ranks are computed in Phase 3.
+        lang_parent_offsets: Dict[str, int] = {}
 
         for lang, (corpus_entities, entity_to_parent, all_queries) in per_lang_data.items():
             parent_offset = len(combined_queries)
+            lang_parent_offsets[lang] = parent_offset
             combined_queries.extend(all_queries)
             combined_entities.extend(corpus_entities)
             for entity in corpus_entities:
@@ -533,7 +538,10 @@ def evaluate_on_codesearchnet(
             ):
                 results = engine.search(query, top_k=config.retrieval_top_k)
                 rank = _find_parent_rank(
-                    results, combined_entity_to_parent, relevant_parent, top_k=10,
+                    results,
+                    combined_entity_to_parent,
+                    relevant_parent + lang_parent_offsets[lang],
+                    top_k=10,
                 )
                 all_ranks[lang].append(rank)
 
