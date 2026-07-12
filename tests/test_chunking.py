@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from config import CodeSearchConfig
-from parser.chunker import recursive_chunk_node
+from parser.chunker import language_aware_recursive_chunk_node, recursive_chunk_node
 from parser.extract import extract_entities
 from parser.parser import get_parser
 
@@ -57,6 +57,12 @@ def test_recursive_chunking_can_be_disabled():
     config = CodeSearchConfig(max_chunk_chars=None)
 
     assert config.max_chunk_chars is None
+
+
+@pytest.mark.parametrize("chunker_type", ["unsupported", None, 1])
+def test_recursive_chunking_config_rejects_invalid_chunker_type(chunker_type):
+    with pytest.raises(ValueError):
+        CodeSearchConfig(chunker_type=chunker_type)
 
 
 def test_recursive_chunking_revalidates_mutated_config():
@@ -225,6 +231,28 @@ def test_high_overlap_uses_full_first_window_without_nested_prefix_chunks():
     assert spans[0].text == "abcdefghij"
     assert [span.start_byte for span in spans] == list(range(11))
     assert all(len(span.text) == 10 for span in spans)
+
+
+def test_language_aware_chunker_respects_python_structure():
+    source = (
+        "def greet(name):\n"
+        "    if name:\n"
+        "        return name\n"
+        "    return 'hello'\n"
+    )
+    source_bytes = source.encode("utf-8")
+    _tree, node = _python_node(source)
+
+    spans = language_aware_recursive_chunk_node(
+        node,
+        source_bytes,
+        max_chars=24,
+        language="python",
+    )
+
+    assert len(spans) > 1
+    assert all(len(span.text) <= 24 for span in spans)
+    assert any("if name:" in span.text for span in spans)
 
 
 @pytest.mark.parametrize(

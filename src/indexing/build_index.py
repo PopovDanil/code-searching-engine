@@ -32,6 +32,7 @@ def _process_file(args: tuple) -> List[CodeEntity]:
     file_path, repository, language, *chunk_options = args
     max_chunk_chars = chunk_options[0] if chunk_options else None
     chunk_overlap_chars = chunk_options[1] if len(chunk_options) > 1 else 0
+    chunker_type = chunk_options[2] if len(chunk_options) > 2 else "recursive"
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as fh:
             source_code = fh.read()
@@ -60,6 +61,7 @@ def _process_file(args: tuple) -> List[CodeEntity]:
         file_path=rel_path,
         max_chunk_chars=max_chunk_chars,
         chunk_overlap_chars=chunk_overlap_chars,
+        chunker_type=chunker_type,
     )
 
 
@@ -122,6 +124,7 @@ def build_index(
                         lang,
                         config.max_chunk_chars,
                         config.chunk_overlap_chars,
+                        config.chunker_type,
                     )
                 )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from bisect import bisect_left
 from dataclasses import dataclass
-from typing import List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from tree_sitter import Node
 
@@ -19,6 +19,83 @@ _TEXT_SEPARATORS: Tuple[str, ...] = (
     "\t",
     "",
 )
+
+SUPPORTED_CHUNKER_TYPES: Tuple[str, ...] = (
+    "recursive",
+    "language_aware_recursive",
+)
+
+_LANGUAGE_AWARE_BOUNDARY_TYPES: Dict[str, Tuple[str, ...]] = {
+    "python": (
+        "if_statement",
+        "for_statement",
+        "while_statement",
+        "try_statement",
+        "with_statement",
+        "match_statement",
+        "return_statement",
+        "expression_statement",
+        "function_definition",
+        "class_definition",
+        "block",
+        "suite",
+    ),
+    "javascript": (
+        "if_statement",
+        "for_statement",
+        "while_statement",
+        "try_statement",
+        "switch_statement",
+        "function_declaration",
+        "function_expression",
+        "arrow_function",
+        "class_declaration",
+        "method_definition",
+        "statement_block",
+    ),
+    "java": (
+        "if_statement",
+        "for_statement",
+        "while_statement",
+        "try_statement",
+        "switch_statement",
+        "method_declaration",
+        "class_declaration",
+        "interface_declaration",
+        "enum_declaration",
+        "block",
+    ),
+    "go": (
+        "if_statement",
+        "for_statement",
+        "switch_statement",
+        "function_declaration",
+        "block",
+    ),
+    "ruby": (
+        "if",
+        "case",
+        "while",
+        "until",
+        "method",
+        "singleton_method",
+        "class",
+        "module",
+        "begin",
+        "do_block",
+    ),
+    "php": (
+        "if_statement",
+        "for_statement",
+        "while_statement",
+        "try_statement",
+        "switch_statement",
+        "function_definition",
+        "class_declaration",
+        "method_declaration",
+        "compound_statement",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -187,7 +264,33 @@ def _strict_children(node: Node) -> List[Node]:
     return children
 
 
-def _recursive_node_spans(node: Node, source_bytes: bytes, limit: int) -> List[ByteSpan]:
+def _select_language_aware_children(
+    node: Node, children: Sequence[Node], language: Optional[str]
+) -> List[Node]:
+    """Prefer children that form natural boundaries for *language*."""
+    if not children:
+        return []
+    if language is None:
+        return list(children)
+
+    normalized = language.lower()
+    boundary_types = _LANGUAGE_AWARE_BOUNDARY_TYPES.get(normalized, ())
+    if not boundary_types:
+        return list(children)
+
+    preferred = [child for child in children if child.type in boundary_types]
+    if preferred:
+        return preferred
+    return list(children)
+
+
+def _recursive_node_spans(
+    node: Node,
+    source_bytes: bytes,
+    limit: int,
+    *,
+    language: Optional[str] = None,
+) -> List[ByteSpan]:
     """Recursively split *node* into non-overlapping spans up to *limit*."""
     node_span = (node.start_byte, node.end_byte)
     if node.end_byte <= node.start_byte:
@@ -196,6 +299,7 @@ def _recursive_node_spans(node: Node, source_bytes: bytes, limit: int) -> List[B
         return [node_span]
 
     children = _strict_children(node)
+    children = _select_language_aware_children(node, children, language)
     if not children:
         return _split_text_span(node.start_byte, node.end_byte, source_bytes, limit)
 
@@ -210,7 +314,7 @@ def _recursive_node_spans(node: Node, source_bytes: bytes, limit: int) -> List[B
         if cursor < child.start_byte:
             pieces.extend(_split_text_span(cursor, child.start_byte, source_bytes, limit))
 
-        pieces.extend(_recursive_node_spans(child, source_bytes, limit))
+        pieces.extend(_recursive_node_spans(child, source_bytes, limit, language=language))
         cursor = child.end_byte
 
     if cursor < node.end_byte:
@@ -273,6 +377,20 @@ def _with_overlap(
     return overlapped
 
 
+def _validate_chunk_limits(max_chars: int, overlap_chars: int) -> None:
+    """Validate chunking limits used by both chunker implementations."""
+    if not isinstance(max_chars, int) or isinstance(max_chars, bool):
+        raise ValueError("max_chars must be an integer")
+    if not isinstance(overlap_chars, int) or isinstance(overlap_chars, bool):
+        raise ValueError("overlap_chars must be an integer")
+    if max_chars <= 0:
+        raise ValueError("max_chars must be greater than zero")
+    if overlap_chars < 0:
+        raise ValueError("overlap_chars cannot be negative")
+    if overlap_chars >= max_chars:
+        raise ValueError("overlap_chars must be smaller than max_chars")
+
+
 def recursive_chunk_node(
     node: Node,
     source_bytes: bytes,
@@ -287,16 +405,7 @@ def recursive_chunk_node(
     whitespace, and finally character boundaries.  ``max_chars`` measures
     Unicode characters and includes any requested overlap.
     """
-    if not isinstance(max_chars, int) or isinstance(max_chars, bool):
-        raise ValueError("max_chars must be an integer")
-    if not isinstance(overlap_chars, int) or isinstance(overlap_chars, bool):
-        raise ValueError("overlap_chars must be an integer")
-    if max_chars <= 0:
-        raise ValueError("max_chars must be greater than zero")
-    if overlap_chars < 0:
-        raise ValueError("overlap_chars cannot be negative")
-    if overlap_chars >= max_chars:
-        raise ValueError("overlap_chars must be smaller than max_chars")
+    _validate_chunk_limits(max_chars, overlap_chars)
     if node.start_byte < 0 or node.end_byte > len(source_bytes):
         raise ValueError("node byte range is outside source_bytes")
 
@@ -328,6 +437,59 @@ def recursive_chunk_node(
             end_byte=end,
             start_line=first_line + bisect_left(newline_offsets, start),
             # A trailing newline belongs to the preceding inclusive line.
+            end_line=first_line + bisect_left(newline_offsets, end - 1),
+            text=source_bytes[start:end].decode("utf-8"),
+        )
+        for start, end in spans
+        if start < end
+    ]
+
+
+def language_aware_recursive_chunk_node(
+    node: Node,
+    source_bytes: bytes,
+    *,
+    max_chars: int,
+    overlap_chars: int = 0,
+    language: Optional[str] = None,
+) -> List[ChunkSpan]:
+    """Chunk based on AST boundaries that are meaningful for the target language."""
+    _validate_chunk_limits(max_chars, overlap_chars)
+    if node.start_byte < 0 or node.end_byte > len(source_bytes):
+        raise ValueError("node byte range is outside source_bytes")
+
+    node_span = (node.start_byte, node.end_byte)
+    if _span_length(source_bytes, node_span) <= max_chars:
+        base_spans = [node_span]
+    else:
+        content_limit = max_chars - overlap_chars if overlap_chars else max_chars
+        base_spans = _recursive_node_spans(
+            node,
+            source_bytes,
+            content_limit,
+            language=language,
+        )
+        if overlap_chars:
+            base_spans = _pack_for_overlap(
+                base_spans,
+                source_bytes,
+                first_limit=max_chars,
+                later_limit=content_limit,
+            )
+    spans = _with_overlap(base_spans, source_bytes, node.start_byte, overlap_chars)
+
+    newline_offsets: List[int] = []
+    newline = source_bytes.find(b"\n", node.start_byte, node.end_byte)
+    while newline >= 0:
+        newline_offsets.append(newline)
+        newline = source_bytes.find(b"\n", newline + 1, node.end_byte)
+    first_line = node.start_point[0] + 1
+
+    return [
+        ChunkSpan(
+            start_byte=start,
+            end_byte=end,
+            start_line=first_line + bisect_left(newline_offsets, start),
             end_line=first_line + bisect_left(newline_offsets, end - 1),
             text=source_bytes[start:end].decode("utf-8"),
         )

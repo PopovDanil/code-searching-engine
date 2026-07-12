@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from parser.chunker import SUPPORTED_CHUNKER_TYPES
+
 
 def _auto_device() -> str:
     """Select CUDA if available, otherwise CPU."""
@@ -33,6 +35,7 @@ class CodeSearchConfig:
     num_parser_workers: int = 4
     max_chunk_chars: Optional[int] = 1500
     chunk_overlap_chars: int = 150
+    chunker_type: str = "recursive"
 
     # ── Retrieval ───────────────────────────────────────────────────────
     top_k: int = 10
@@ -82,6 +85,12 @@ class CodeSearchConfig:
         """Validate the current recursive chunking settings."""
         if self.max_chunk_chars is None:
             return
+        if not isinstance(self.chunker_type, str) or not self.chunker_type:
+            raise ValueError("chunker_type must be a non-empty string")
+        if self.chunker_type not in SUPPORTED_CHUNKER_TYPES:
+            raise ValueError(
+                "chunker_type must be one of: " + ", ".join(SUPPORTED_CHUNKER_TYPES)
+            )
         if not isinstance(self.max_chunk_chars, int) or isinstance(
             self.max_chunk_chars, bool
         ):

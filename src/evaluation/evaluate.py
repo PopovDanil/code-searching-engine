@@ -170,6 +170,7 @@ def _prepare_evaluation_example(
         file_path=file_path,
         max_chunk_chars=config.max_chunk_chars,
         chunk_overlap_chars=config.chunk_overlap_chars,
+        chunker_type=config.chunker_type,
     )
     paired_chunks = _select_paired_chunks(chunks, function_name)
     if not paired_chunks:

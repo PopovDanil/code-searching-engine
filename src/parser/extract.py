@@ -9,7 +9,11 @@ from typing import List, Optional
 
 from tree_sitter import Node, Tree
 
-from parser.chunker import recursive_chunk_node
+from parser.chunker import (
+    SUPPORTED_CHUNKER_TYPES,
+    language_aware_recursive_chunk_node,
+    recursive_chunk_node,
+)
 from parser.parser import SUPPORTED_LANGUAGES, LangInfo
 
 logger = logging.getLogger(__name__)
@@ -235,6 +239,7 @@ def extract_entities(
     *,
     max_chunk_chars: Optional[int] = None,
     chunk_overlap_chars: int = 0,
+    chunker_type: str = "recursive",
 ) -> List[CodeEntity]:
     """Walk *tree* and return every function, method, and class found.
 
@@ -255,12 +260,20 @@ def extract_entities(
         overlap.  ``None`` keeps each extracted entity whole.
     chunk_overlap_chars:
         Number of characters repeated from the preceding chunk.
+    chunker_type:
+        Chunking strategy selector. Supported values are
+        ``"recursive"`` and ``"language_aware_recursive"``.
 
     Returns
     -------
     List[CodeEntity]
         All extracted entities, each with metadata.
     """
+    if chunker_type not in SUPPORTED_CHUNKER_TYPES:
+        raise ValueError(
+            "chunker_type must be one of: " + ", ".join(SUPPORTED_CHUNKER_TYPES)
+        )
+
     lang_info: LangInfo = SUPPORTED_LANGUAGES[language]
     source_bytes = source_code.encode("utf-8")
     entities: List[CodeEntity] = []
@@ -319,12 +332,21 @@ def extract_entities(
             entities.append(entity)
             continue
 
-        spans = recursive_chunk_node(
-            node,
-            source_bytes,
-            max_chars=max_chunk_chars,
-            overlap_chars=chunk_overlap_chars,
-        )
+        if chunker_type == "language_aware_recursive":
+            spans = language_aware_recursive_chunk_node(
+                node,
+                source_bytes,
+                max_chars=max_chunk_chars,
+                overlap_chars=chunk_overlap_chars,
+                language=language,
+            )
+        else:
+            spans = recursive_chunk_node(
+                node,
+                source_bytes,
+                max_chars=max_chunk_chars,
+                overlap_chars=chunk_overlap_chars,
+            )
         chunk_count = len(spans)
         for chunk_index, span in enumerate(spans):
             chunk_code = re.sub(r"\n{3,}", "\n\n", span.text)
