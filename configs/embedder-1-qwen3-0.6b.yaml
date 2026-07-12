@@ -1,0 +1,7 @@
+# Baseline: текущий эмбеддер (universal, instruction-aware)
+embedding_model: "Qwen/Qwen3-Embedding-0.6B"
+enable_reranking: false
+device: "cuda"
+embedding_dtype: "float16"
+batch_size: 32
+index_dir: "index_qwen3_06b"

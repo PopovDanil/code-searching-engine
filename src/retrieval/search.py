@@ -116,6 +116,8 @@ class SearchEngine:
                 batch_size=self._config.batch_size,
                 query_instruction=self._config.query_instruction,
                 torch_dtype=self._config.get_torch_dtype(),
+                query_prefix=self._config.st_query_prefix,
+                trust_remote_code=self._config.embedder_trust_remote_code,
             )
         return self._embedder
 

@@ -1,0 +1,7 @@
+# Qodo-Embed-1-1.5B — сильнейший открытый код-эмбеддер (CoIR ~68.5)
+embedding_model: "Qodo/Qodo-Embed-1-1.5B"
+embedder_trust_remote_code: true
+enable_reranking: false
+device: "cuda"
+batch_size: 16
+index_dir: "index_qodo_15b"

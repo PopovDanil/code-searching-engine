@@ -190,6 +190,8 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         device: str = "auto",
         batch_size: int = 64,
+        query_prefix: str = "",
+        trust_remote_code: bool = False,
     ) -> None:
         from sentence_transformers import SentenceTransformer
 
@@ -198,8 +200,13 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 
         self._device = device
         self._batch_size = batch_size
+        # Some code embedders (e.g. CodeRankEmbed) were trained with a fixed
+        # query-side prefix; without it their retrieval quality degrades.
+        self._query_prefix = query_prefix
         logger.info("Loading sentence-transformers model %s on %s", model_name, device)
-        self._model = SentenceTransformer(model_name, device=device)
+        self._model = SentenceTransformer(
+            model_name, device=device, trust_remote_code=trust_remote_code
+        )
         self._dim: int = self._model.get_sentence_embedding_dimension()
 
     @property
@@ -216,8 +223,9 @@ class SentenceTransformerEmbedder(BaseEmbedder):
         return np.asarray(embeddings, dtype=np.float32)
 
     def embed_query(self, query: str) -> np.ndarray:
+        text = f"{self._query_prefix}{query}" if self._query_prefix else query
         emb = self._model.encode(
-            [query],
+            [text],
             normalize_embeddings=True,
             show_progress_bar=False,
         )
@@ -233,6 +241,8 @@ def create_embedder(
     batch_size: int = 16,
     query_instruction: str = "Retrieve relevant source code based on the user query",
     torch_dtype: Optional[torch.dtype] = None,
+    query_prefix: str = "",
+    trust_remote_code: bool = False,
 ) -> BaseEmbedder:
     """Instantiate the correct embedder based on *model_name*.
 
@@ -254,6 +264,8 @@ def create_embedder(
             model_name=model_name,
             device=device,
             batch_size=batch_size,
+            query_prefix=query_prefix,
+            trust_remote_code=trust_remote_code,
         )
     except ImportError:
         raise ImportError(

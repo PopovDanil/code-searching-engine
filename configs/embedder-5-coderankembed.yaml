@@ -1,0 +1,9 @@
+# CodeRankEmbed (137M) — лучший по качеству-на-размер (CoIR ~60.1, CoRNStack).
+# Требует фиксированный префикс запроса — без него метрики модели занижены.
+embedding_model: "nomic-ai/CodeRankEmbed"
+embedder_trust_remote_code: true
+st_query_prefix: "Represent this query for searching relevant code: "
+enable_reranking: false
+device: "cuda"
+batch_size: 32
+index_dir: "index_coderankembed"
