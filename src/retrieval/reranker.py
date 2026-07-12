@@ -13,6 +13,7 @@ from typing import List, Optional, Tuple
 import torch
 
 from parser.extract import CodeEntity
+from console import console, log_model_loading, log_model_loaded
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ class Qwen3Reranker(BaseReranker):
         else:
             dtype = torch.float32
 
-        logger.info("Loading reranker model %s on %s (dtype=%s)", model_name, device, dtype)
+        log_model_loading(console, model_name, device, str(dtype))
         self._tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self._tokenizer.padding_side = "left"
         if self._tokenizer.pad_token is None:
@@ -106,6 +107,7 @@ class Qwen3Reranker(BaseReranker):
             trust_remote_code=True,
         ).to(self._device)
         self._model.eval()
+        log_model_loaded(console, model_name)
 
         # Resolve yes/no token ids
         self._yes_token_id = self._tokenizer("yes", add_special_tokens=False)["input_ids"][0]

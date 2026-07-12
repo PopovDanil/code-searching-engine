@@ -9,6 +9,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from rich.panel import Panel
+from rich.syntax import Syntax
+from rich.text import Text
+
 from config import CodeSearchConfig
 from embedding.embedder import BaseEmbedder, create_embedder
 from indexing.faiss_index import FaissCodeIndex
@@ -43,6 +47,37 @@ class SearchResult:
         for line in self.entity.source_code.splitlines():
             lines.append(f"    {line}")
         return "\n".join(lines)
+
+    def to_rich(self) -> Panel:
+        """Render as a Rich Panel with syntax-highlighted code."""
+        if self.final_score >= 0.8:
+            score_color = "bold green"
+        elif self.final_score >= 0.5:
+            score_color = "yellow"
+        else:
+            score_color = "red"
+
+        meta_parts = [
+            f"[{score_color}]Score:     {self.final_score:.4f}[/]",
+            f"[bold]File:      [/]{self.entity.file_path}",
+            f"[bold]Function:  [/]{self.entity.identifier}",
+            f"[bold]Language:  [/]{self.entity.language.capitalize()}",
+            f"[bold]Lines:     [/]{self.entity.start_line}\u2013{self.entity.end_line}",
+        ]
+        if self.reranker_score is not None:
+            meta_parts.append(
+                f"[dim]Reranker:  {self.reranker_score:.4f}  |  "
+                f"Embed: {self.embedding_similarity:.4f}  |  "
+                f"Meta: {self.metadata_bonus:.4f}[/]"
+            )
+
+        lang = self.entity.language or "python"
+        code = self.entity.source_code.rstrip()
+        syntax = Syntax(code, lang, theme="monokai", line_numbers=False, word_wrap=True)
+
+        content = "\n".join(meta_parts) + "\n" + str(syntax)
+        title = Text("Result", style="bold cyan")
+        return Panel(content, title=title, border_style="bright_blue", padding=(0, 1))
 
 
 # ── Metadata bonus ──────────────────────────────────────────────────────

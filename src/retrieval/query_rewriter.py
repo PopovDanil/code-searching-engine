@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -61,6 +62,13 @@ class LLMQueryRewriter(BaseQueryRewriter):
         ).to(self._device)
         self._model.eval()
 
+        self._has_chat_template = getattr(self._tokenizer, "chat_template", None) is not None
+        if not self._has_chat_template:
+            logger.warning(
+                "Tokenizer for %s has no chat template; using plain prompt format",
+                model_name,
+            )
+
     def _instruction(self, query: str) -> str:
         if self._strategy == "hyde":
             return (
@@ -77,12 +85,17 @@ class LLMQueryRewriter(BaseQueryRewriter):
         )
 
     def rewrite(self, query: str) -> str:
-        messages = [{"role": "user", "content": self._instruction(query)}]
-        prompt = self._tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True,
-        )
+        instruction = self._instruction(query)
+        if self._has_chat_template:
+            messages = [{"role": "user", "content": instruction}]
+            prompt = self._tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True,
+            )
+        else:
+            prompt = instruction
         encoded = self._tokenizer(prompt, return_tensors="pt").to(self._device)
         input_length = encoded["input_ids"].shape[1]
+        t0 = time.perf_counter()
         with torch.no_grad():
             output = self._model.generate(
                 **encoded,
@@ -90,12 +103,15 @@ class LLMQueryRewriter(BaseQueryRewriter):
                 do_sample=False,
                 pad_token_id=self._tokenizer.eos_token_id,
             )
+        elapsed_ms = (time.perf_counter() - t0) * 1000
         rewritten = self._tokenizer.decode(
             output[0, input_length:], skip_special_tokens=True,
         ).strip()
         if not rewritten:
             logger.warning("Query rewriter returned empty text; using original query")
             return query
+        logger.info("Query rewrite took %.1f ms", elapsed_ms)
+        logger.debug("Rewritten query: %s", rewritten)
         return rewritten
 
 

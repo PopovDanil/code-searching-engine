@@ -20,6 +20,8 @@ from typing import List, Optional
 import numpy as np
 import torch
 
+from console import console, log_model_loading, log_model_loaded
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,7 +119,7 @@ class Qwen3Embedder(BaseEmbedder):
 
         dtype = torch_dtype or (torch.float16 if self._device.type == "cuda" else torch.float32)
 
-        logger.info("Loading embedding model %s on %s (dtype=%s)", model_name, device, dtype)
+        log_model_loading(console, model_name, device, str(dtype))
         self._tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
         self._model = AutoModel.from_pretrained(
             model_name,
@@ -125,6 +127,7 @@ class Qwen3Embedder(BaseEmbedder):
             trust_remote_code=True,
         ).to(self._device)
         self._model.eval()
+        log_model_loaded(console, model_name)
 
         # Determine dimension from a dummy forward pass
         self._dim: Optional[int] = None
@@ -198,9 +201,10 @@ class SentenceTransformerEmbedder(BaseEmbedder):
 
         self._device = device
         self._batch_size = batch_size
-        logger.info("Loading sentence-transformers model %s on %s", model_name, device)
+        log_model_loading(console, model_name, device, "default")
         self._model = SentenceTransformer(model_name, device=device)
         self._dim: int = self._model.get_sentence_embedding_dimension()
+        log_model_loaded(console, model_name)
 
     @property
     def dimension(self) -> int:
