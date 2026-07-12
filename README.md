@@ -84,7 +84,12 @@ rank metrics.
 chunk settings count Unicode characters rather than model tokens. The
 structured metadata added before embedding is not part of this character
 budget. Overlap must be non-negative and smaller than the maximum chunk size.
-Set `max_chunk_chars: null` to disable recursive chunking.
+Set `max_chunk_chars: null` to disable recursive chunking. A second
+language-aware chunker mode is also available via `chunker_type` in the
+config (`"recursive"` or `"language_aware_recursive"`) so you can compare
+chunking behavior for the same code. The language-aware mode currently
+considers Python, JavaScript, Java, Go, Ruby, and PHP syntax when picking
+natural chunk boundaries.
 
 ### Scoring Formula
 

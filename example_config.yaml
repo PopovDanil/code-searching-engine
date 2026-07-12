@@ -11,6 +11,7 @@ max_seq_length: 512
 num_parser_workers: 4
 max_chunk_chars: 1500       # Unicode characters; null disables chunking
 chunk_overlap_chars: 150
+chunker_type: "recursive"   # "recursive" or "language_aware_recursive"
 
 # ── Retrieval ───────────────────────────────────────────────────────
 top_k: 10
