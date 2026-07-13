@@ -54,11 +54,23 @@ def _ndcg(ranks: Sequence[float], k: int = 10) -> float:
 _RECALL_KS = (1, 5, 10, 20, 50, 100)
 
 
+def _precision_at_k(ranks: Sequence[float], k: int) -> float:
+    """Precision@K. Each query has exactly one relevant doc, so this equals
+    ``Recall@K / K`` — kept for completeness; NDCG@100 is the more useful
+    pool-quality metric here."""
+    if not ranks:
+        return 0.0
+    hits = sum(1 for r in ranks if r <= k)
+    return hits / (k * len(ranks))
+
+
 def _build_metrics(ranks: Sequence[float]) -> Dict[str, float]:
     """Build the full metric dict for a list of ranks."""
     metrics = {f"Recall@{k}": _recall_at_k(ranks, k) for k in _RECALL_KS}
+    metrics["Precision@100"] = _precision_at_k(ranks, 100)
     metrics["MRR"] = _mrr(ranks)
     metrics["NDCG@10"] = _ndcg(ranks, 10)
+    metrics["NDCG@100"] = _ndcg(ranks, 100)
     return metrics
 
 

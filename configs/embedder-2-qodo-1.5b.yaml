@@ -1,11 +1,11 @@
-# Qodo-Embed-1-1.5B — дообученная gte-Qwen2-1.5B-instruct (семейство GTE, CoIR ~68.5).
-# Карточка требует trust_remote_code=True. GTE-код требует отключить unpad/mem-efficient
-# attention без xformers. Малый batch — 1.5B на T4 иначе ловит OOM.
+# Qodo-Embed-1-1.5B — дообученная gte-Qwen2-1.5B-instruct (CoIR ~68.5).
+# Их кастомный modeling_qwen.py лезет за config.rope_theta, которого нет в
+# загруженном конфиге -> AttributeError. Подставляем rope_theta (дефолт Qwen2)
+# через config_kwargs. Малый batch — 1.5B на T4 иначе ловит OOM.
 embedding_model: "Qodo/Qodo-Embed-1-1.5B"
 embedder_trust_remote_code: true
 st_config_kwargs:
-  unpad_inputs: false
-  use_memory_efficient_attention: false
+  rope_theta: 1000000
 enable_reranking: false
 device: "cuda"
 batch_size: 8

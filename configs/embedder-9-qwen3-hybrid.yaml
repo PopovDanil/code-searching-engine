@@ -1,13 +1,13 @@
 # Гибрид BM25 + dense (RRF) — идея из CodeRAG.
-# Тот же dense-эмбеддер, что baseline (Qwen3-0.6B), плюс лексический BM25;
-# два списка кандидатов сливаются через Reciprocal Rank Fusion.
-# Сравнивать с embedder-1 (dense-only, тот же эмбеддер).
+# BM25 понижен в весе (0.3): при равных весах (1.0/1.0) слабый на честном eval
+# BM25 вытеснял верные ответы сильного dense и ронял метрики. Сравнивать с
+# embedder-1 (dense-only, тот же эмбеддер).
 embedding_model: "Qwen/Qwen3-Embedding-0.6B"
 enable_reranking: false
 enable_hybrid: true
 hybrid_rrf_k: 60
 hybrid_dense_weight: 1.0
-hybrid_bm25_weight: 1.0
+hybrid_bm25_weight: 0.3
 device: "cuda"
 embedding_dtype: "float16"
 batch_size: 32
