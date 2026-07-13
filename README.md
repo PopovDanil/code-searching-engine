@@ -86,8 +86,9 @@ structured metadata added before embedding is not part of this character
 budget. Overlap must be non-negative and smaller than the maximum chunk size.
 Set `max_chunk_chars: null` to disable recursive chunking. A second
 language-aware chunker mode is also available via `chunker_type` in the
-config (`"recursive"` or `"language_aware_recursive"`) so you can compare
-chunking behavior for the same code. The language-aware mode currently
+config or `--chunker-type` on `index` and `evaluate` (`recursive` or
+`language_aware_recursive`) so you can compare chunking behavior for the same
+code. The language-aware mode currently
 considers Python, JavaScript, Java, Go, Ruby, and PHP syntax when picking
 natural chunk boundaries.
 
@@ -152,6 +153,7 @@ entities, and saves a FAISS index.
 | `--index-type` | Index type: `flat` (exact) or `hnsw` (approximate) |
 | `--batch-size`, `-b` | Inference batch size |
 | `--separate-indexes`, `-s` | Build a separate index per language |
+| `--chunker-type` | Override the YAML chunker: `recursive` or `language_aware_recursive` |
 | `--verbose`, `-v` | Enable debug logging |
 
 ```bash
@@ -226,10 +228,11 @@ search and evaluation commands preserve their previous behavior.
 | `--config`, `-c` | YAML config file |
 | `--languages`, `-l` | Comma-separated languages (e.g. `python,go`) |
 | `--max-queries` | Max queries per language |
+| `--chunker-type` | Override the YAML chunker: `recursive` or `language_aware_recursive` |
 | `--verbose`, `-v` | Enable debug logging |
 
 ```bash
-python src/cli.py evaluate --config example_config.yaml --languages python --max-queries 10
+python src/cli.py evaluate --config example_config.yaml --languages python --max-queries 10 --chunker-type language_aware_recursive
 ```
 
 ## Testing
@@ -292,6 +295,7 @@ max_seq_length: 512
 num_parser_workers: 4
 max_chunk_chars: 1500
 chunk_overlap_chars: 150
+chunker_type: "recursive"
 top_k: 10
 retrieval_top_k: 100
 index_type: "flat"

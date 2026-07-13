@@ -127,6 +127,13 @@ def _prepare_evaluation_example(
     if not code.strip() or not documentation.strip():
         return documentation, []
 
+    # CodeSearchNet stores PHP snippets without the opening "<?php" tag.
+    # tree-sitter-php then parses the whole snippet as inline HTML and finds
+    # no functions, so every PHP row was silently dropped (all PHP metrics = 0).
+    # Prepend the tag so the grammar recognises the code.
+    if language == "php" and not code.lstrip().startswith("<?"):
+        code = "<?php\n" + code
+
     repository = str(
         example.get("repository_name", example.get("repository", "")) or ""
     )
@@ -259,6 +266,12 @@ def _cache_key(
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    split: str,
+    chunker_type: str = "recursive",
+) -> str:
+    """Return a deterministic cache key for the given parameters."""
+    raw = f"{max_dataset_records}|{embedding_model}|{split}|{chunker_type}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def _eval_cache_dir(config: CodeSearchConfig, lang: Optional[str] = None) -> Path:
@@ -492,6 +505,8 @@ def evaluate_on_codesearchnet(
         chunker_type=config.chunker_type,
         include_docstring=False,
         separate_indexes=separate,
+        split,
+        config.chunker_type,
     )
 
     # per_lang_data[lang] = (corpus_entities, entity_to_parent, all_queries)

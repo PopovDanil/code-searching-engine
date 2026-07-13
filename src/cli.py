@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import typer
 
@@ -18,6 +18,30 @@ from console import (
 
 app = typer.Typer(help="Semantic code search CLI")
 
+if TYPE_CHECKING:
+    from config import CodeSearchConfig
+
+
+# ── CLI override helpers ───────────────────────────────────────────────
+
+def _apply_chunker_type(
+    config: CodeSearchConfig,
+    chunker_type: Optional[str],
+) -> None:
+    """Apply and validate an optional CLI chunker override."""
+    if chunker_type is None:
+        return
+
+    from parser.chunker import SUPPORTED_CHUNKER_TYPES
+
+    if chunker_type not in SUPPORTED_CHUNKER_TYPES:
+        choices = ", ".join(SUPPORTED_CHUNKER_TYPES)
+        raise typer.BadParameter(
+            f"must be one of: {choices}",
+            param_hint="--chunker-type",
+        )
+    config.chunker_type = chunker_type
+
 
 @app.command()
 def index(
@@ -28,6 +52,7 @@ def index(
     index_type: Optional[str] = typer.Option(None, "--index-type", help="Index type (flat/hnsw)"),
     batch_size: Optional[int] = typer.Option(None, "--batch-size", "-b", help="Batch size"),
     separate_indexes: bool = typer.Option(False, "--separate-indexes", "-s", help="Build a separate index per language"),
+    chunker_type: Optional[str] = typer.Option(None, "--chunker-type", help="Chunker: recursive or language_aware_recursive"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
     """Index a repository for semantic search."""
@@ -50,6 +75,7 @@ def index(
         config.batch_size = batch_size
     if separate_indexes:
         config.separate_indexes = True
+    _apply_chunker_type(config, chunker_type)
 
     from indexing.build_index import build_index
 
@@ -138,6 +164,7 @@ def evaluate(
     fill_from_split: Optional[bool] = typer.Option(None, "--fill-from-split", help="Fill the corpus from a secondary split"),
     no_deduplicate: bool = typer.Option(False, "--no-deduplicate", help="Allow duplicate functions across evaluation splits"),
     train_as_queries: Optional[bool] = typer.Option(None, "--train-as-queries", help="Use fill-split records as evaluation queries"),
+    chunker_type: Optional[str] = typer.Option(None, "--chunker-type", help="Chunker: recursive or language_aware_recursive"),
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="YAML config file"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -171,6 +198,7 @@ def evaluate(
         config.evaluation_deduplicate = False
     if train_as_queries is not None:
         config.evaluation_train_as_queries = train_as_queries
+    _apply_chunker_type(config, chunker_type)
 
     effective_max_queries = max_queries
     effective_max_dataset_records = max_dataset_records or config.max_dataset_records
