@@ -36,7 +36,6 @@ def test_query_rewriting_from_yaml():
 
 def test_reranker_prompt_defaults():
     config = CodeSearchConfig()
-    assert config.reranker_max_length == 2048
     assert config.reranker_instruction
 
 

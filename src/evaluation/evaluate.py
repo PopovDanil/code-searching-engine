@@ -187,6 +187,25 @@ def _prepare_evaluation_example(
     ]
 
 
+def _normalise_code_for_dedup(code: str) -> str:
+    """Normalise inconsequential trailing whitespace for deduplication."""
+    return "\n".join(line.rstrip() for line in code.strip().splitlines())
+
+
+def _dedup_key(example: dict, language: str) -> str:
+    """Return a content-based identity for a CodeSearchNet function.
+
+    The function name is included to avoid collapsing distinct named entry
+    points whose bodies happen to be identical. Repository and path are not
+    included because the same function may be mirrored under another path.
+    """
+    code = str(example.get("func_code_string", "") or "")
+    func_name = str(example.get("func_name", "") or "")
+    normalised = _normalise_code_for_dedup(code)
+    raw = f"{language}\n{func_name}\n{normalised}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def _find_parent_rank(
     results: Sequence[object],
     entity_to_parent: Dict[int, int],
@@ -215,6 +234,38 @@ def _find_parent_rank(
 def _cache_key(
     max_dataset_records: Optional[int],
     embedding_model: str,
+    split: Optional[str] = None,
+    *,
+    languages: Optional[List[str]] = None,
+    primary_split: Optional[str] = None,
+    fill_split: str = "train",
+    fill_from_split: bool = False,
+    deduplicate: bool = True,
+    train_as_queries: bool = False,
+    max_chunk_chars: Optional[int] = None,
+    chunk_overlap_chars: int = 0,
+    chunker_type: str = "recursive",
+    include_docstring: bool = False,
+    separate_indexes: bool = False,
+) -> str:
+    """Return a deterministic cache key for the given parameters."""
+    payload = {
+        "max_dataset_records": max_dataset_records,
+        "embedding_model": embedding_model,
+        "languages": languages or [],
+        "primary_split": primary_split or split or "test",
+        "fill_split": fill_split,
+        "fill_from_split": fill_from_split,
+        "deduplicate": deduplicate,
+        "train_as_queries": train_as_queries,
+        "max_chunk_chars": max_chunk_chars,
+        "chunk_overlap_chars": chunk_overlap_chars,
+        "chunker_type": chunker_type,
+        "include_docstring": include_docstring,
+        "separate_indexes": separate_indexes,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
     split: str,
     chunker_type: str = "recursive",
 ) -> str:
@@ -377,7 +428,7 @@ def evaluate_on_codesearchnet(
     languages: Optional[List[str]] = None,
     max_queries: Optional[int] = None,
     max_dataset_records: Optional[int] = None,
-    split: str = "test",
+    split: Optional[str] = None,
 ) -> Dict[str, Dict[str, float]]:
     """Evaluate the search system on CodeSearchNet.
 
@@ -395,7 +446,8 @@ def evaluate_on_codesearchnet(
         Divided evenly among target languages.  ``None`` means load
         all records.
     split:
-        Dataset split to use (``"test"`` or ``"validation"``).
+        Backward-compatible override for the primary dataset split. When
+        omitted, ``config.evaluation_primary_split`` is used.
 
     Returns
     -------
@@ -420,6 +472,8 @@ def evaluate_on_codesearchnet(
     all_results: Dict[str, Dict[str, float]] = {}
     evaluation_config = replace(config, include_docstring=False)
     separate = config.separate_indexes
+    primary_split = split or config.evaluation_primary_split
+    fill_split = config.evaluation_fill_split
 
     # Pre-declare shared state for both index modes
     lang_indexes: Dict[str, FaissCodeIndex] = {}
@@ -440,6 +494,17 @@ def evaluate_on_codesearchnet(
     cache_key = _cache_key(
         max_dataset_records,
         config.embedding_model,
+        languages=target_langs,
+        primary_split=primary_split,
+        fill_split=fill_split,
+        fill_from_split=config.evaluation_fill_from_split,
+        deduplicate=config.evaluation_deduplicate,
+        train_as_queries=config.evaluation_train_as_queries,
+        max_chunk_chars=config.max_chunk_chars,
+        chunk_overlap_chars=config.chunk_overlap_chars,
+        chunker_type=config.chunker_type,
+        include_docstring=False,
+        separate_indexes=separate,
         split,
         config.chunker_type,
     )
@@ -536,7 +601,6 @@ def evaluate_on_codesearchnet(
     # ═══════════════════════════════════════════════════════════════
 
     for lang in target_langs:
-        logger.info("Loading CodeSearchNet / %s", lang)
         per_lang_limit = per_lang_limits[lang]
 
         # ── Try loading from cache (separate mode only) ────────────
@@ -553,39 +617,159 @@ def evaluate_on_codesearchnet(
                 continue
 
         # ── Load dataset ──────────────────────────────────────────
-        try:
-            ds = load_dataset(
-                "code-search-net/code_search_net",
-                lang,
-                split=split,
-                # trust_remote_code=True,
-            )
-        except Exception:
-            logger.exception("Failed to load CodeSearchNet for %s - skipping", lang)
-            continue
-
         corpus_entities: List[CodeEntity] = []
         entity_to_parent: Dict[int, int] = {}
         all_queries: List[Tuple[str, int]] = []
+        corpus_record_count = 0
 
-        corpus_limit = per_lang_limit if per_lang_limit is not None else len(ds)
-        with create_progress() as progress:
-            task = progress.add_task(f"Loading {lang}", total=min(corpus_limit, len(ds)))
-            for i, example in enumerate(ds):
-                if i >= corpus_limit:
-                    break
+        logger.info(
+            "Loading CodeSearchNet / %s primary split=%s",
+            lang, primary_split,
+        )
+        try:
+            primary_ds = load_dataset(
+                "code-search-net/code_search_net",
+                lang,
+                split=primary_split,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to load CodeSearchNet primary split for %s - skipping",
+                lang,
+            )
+            continue
 
-                query, chunks = _prepare_evaluation_example(example, lang, config)
-                if not chunks:
+        if not config.evaluation_fill_from_split:
+            # Preserve the old single-split behaviour: the limit counts source
+            # rows considered, and every valid record also becomes a query.
+            corpus_limit = (
+                per_lang_limit if per_lang_limit is not None else len(primary_ds)
+            )
+            with create_progress() as progress:
+                task = progress.add_task(
+                    f"Loading {lang}",
+                    total=min(corpus_limit, len(primary_ds)),
+                )
+                for i, example in enumerate(primary_ds):
+                    if i >= corpus_limit:
+                        break
+                    query, chunks = _prepare_evaluation_example(example, lang, config)
+                    if chunks:
+                        parent_id = corpus_record_count
+                        corpus_entities.extend(chunks)
+                        for chunk in chunks:
+                            entity_to_parent[id(chunk)] = parent_id
+                        all_queries.append((query, parent_id))
+                        corpus_record_count += 1
                     progress.advance(task)
-                    continue
+        else:
+            # The full primary split supplies corpus records and evaluation
+            # queries. The fill split supplies corpus-only distractors by
+            # default, until the valid-parent target is reached.
+            seen_keys = set()
+            primary_duplicates = 0
+            with create_progress() as progress:
+                task = progress.add_task(
+                    f"Loading {lang} primary", total=len(primary_ds),
+                )
+                for example in primary_ds:
+                    key = _dedup_key(example, lang)
+                    if config.evaluation_deduplicate and key in seen_keys:
+                        primary_duplicates += 1
+                        progress.advance(task)
+                        continue
+                    query, chunks = _prepare_evaluation_example(example, lang, config)
+                    if chunks:
+                        parent_id = corpus_record_count
+                        corpus_entities.extend(chunks)
+                        for chunk in chunks:
+                            entity_to_parent[id(chunk)] = parent_id
+                        all_queries.append((query, parent_id))
+                        corpus_record_count += 1
+                        if config.evaluation_deduplicate:
+                            seen_keys.add(key)
+                    progress.advance(task)
 
-                parent_id = len(all_queries)
-                corpus_entities.extend(chunks)
-                for chunk in chunks:
-                    entity_to_parent[id(chunk)] = parent_id
-                all_queries.append((query, parent_id))
-                progress.advance(task)
+            logger.info(
+                "Loaded %d valid primary records, %d chunks for %s",
+                corpus_record_count, len(corpus_entities), lang,
+            )
+            if primary_duplicates:
+                logger.info(
+                    "Skipped %d duplicate primary records for %s",
+                    primary_duplicates, lang,
+                )
+
+            fill_added = 0
+            fill_duplicates = 0
+            needs_fill = (
+                per_lang_limit is None or corpus_record_count < per_lang_limit
+            )
+            if needs_fill:
+                target_label = (
+                    str(per_lang_limit) if per_lang_limit is not None else "all"
+                )
+                logger.info(
+                    "Loading CodeSearchNet / %s fill split=%s until target=%s",
+                    lang, fill_split, target_label,
+                )
+                try:
+                    fill_ds = load_dataset(
+                        "code-search-net/code_search_net",
+                        lang,
+                        split=fill_split,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to load CodeSearchNet fill split for %s; "
+                        "continuing with the primary corpus",
+                        lang,
+                    )
+                    fill_ds = []
+
+                fill_total = len(fill_ds)
+                if per_lang_limit is not None:
+                    fill_total = min(
+                        fill_total,
+                        max(0, per_lang_limit - corpus_record_count),
+                    )
+                with create_progress() as progress:
+                    task = progress.add_task(
+                        f"Loading {lang} fill", total=fill_total,
+                    )
+                    for example in fill_ds:
+                        if (
+                            per_lang_limit is not None
+                            and corpus_record_count >= per_lang_limit
+                        ):
+                            break
+                        key = _dedup_key(example, lang)
+                        if config.evaluation_deduplicate and key in seen_keys:
+                            fill_duplicates += 1
+                            continue
+                        query, chunks = _prepare_evaluation_example(
+                            example, lang, config,
+                        )
+                        if not chunks:
+                            continue
+                        parent_id = corpus_record_count
+                        corpus_entities.extend(chunks)
+                        for chunk in chunks:
+                            entity_to_parent[id(chunk)] = parent_id
+                        if config.evaluation_train_as_queries:
+                            all_queries.append((query, parent_id))
+                        corpus_record_count += 1
+                        fill_added += 1
+                        if config.evaluation_deduplicate:
+                            seen_keys.add(key)
+                        progress.advance(task)
+
+            logger.info(
+                "Added %d valid fill records, skipped %d duplicates, "
+                "final corpus records=%d, chunks=%d, evaluation queries=%d",
+                fill_added, fill_duplicates, corpus_record_count,
+                len(corpus_entities), len(all_queries),
+            )
 
         if not all_queries:
             logger.warning("No valid examples for %s - skipping", lang)
@@ -593,7 +777,7 @@ def evaluate_on_codesearchnet(
 
         logger.info(
             "Loaded %d records (%d chunks) for %s",
-            len(all_queries), len(corpus_entities), lang,
+            corpus_record_count, len(corpus_entities), lang,
         )
         per_lang_data[lang] = (corpus_entities, entity_to_parent, all_queries)
 
@@ -636,16 +820,17 @@ def evaluate_on_codesearchnet(
         # Per-language parent-id offsets: entity parent ids are globalised
         # below, so query-side ids must be shifted by the same amount when
         # ranks are computed in Phase 3.
-        lang_parent_offsets: Dict[str, int] = {}
+        combined_parent_count = 0
 
         for lang, (corpus_entities, entity_to_parent, all_queries) in per_lang_data.items():
-            parent_offset = len(combined_queries)
+            parent_offset = combined_parent_count
             lang_offsets[lang] = parent_offset
             combined_queries.extend(all_queries)
             combined_entities.extend(corpus_entities)
             for entity in corpus_entities:
                 parent_id = entity_to_parent[id(entity)]
                 combined_entity_to_parent[id(entity)] = parent_id + parent_offset
+            combined_parent_count += max(entity_to_parent.values(), default=-1) + 1
 
         texts = [
             entity.to_structured_text(include_docstring=False)
