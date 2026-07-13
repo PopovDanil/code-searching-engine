@@ -216,9 +216,10 @@ def _cache_key(
     max_dataset_records: Optional[int],
     embedding_model: str,
     split: str,
+    chunker_type: str = "recursive",
 ) -> str:
     """Return a deterministic cache key for the given parameters."""
-    raw = f"{max_dataset_records}|{embedding_model}|{split}"
+    raw = f"{max_dataset_records}|{embedding_model}|{split}|{chunker_type}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -436,7 +437,12 @@ def evaluate_on_codesearchnet(
     else:
         per_lang_limits = {lang: None for lang in target_langs}
 
-    cache_key = _cache_key(max_dataset_records, config.embedding_model, split)
+    cache_key = _cache_key(
+        max_dataset_records,
+        config.embedding_model,
+        split,
+        config.chunker_type,
+    )
 
     # per_lang_data[lang] = (corpus_entities, entity_to_parent, all_queries)
     per_lang_data: Dict[str, Tuple[List[CodeEntity], Dict[int, int], List[Tuple[str, int]]]] = {}

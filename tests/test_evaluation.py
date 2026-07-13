@@ -247,6 +247,12 @@ def test_cache_key_varies_with_params():
     assert _cache_key(100000, "Qwen/Qwen3-Embedding-0.6B", "test") != base
     assert _cache_key(500000, "other-model", "test") != base
     assert _cache_key(500000, "Qwen/Qwen3-Embedding-0.6B", "validation") != base
+    assert _cache_key(
+        500000,
+        "Qwen/Qwen3-Embedding-0.6B",
+        "test",
+        "language_aware_recursive",
+    ) != base
 
 
 def test_max_dataset_records_division_even():
