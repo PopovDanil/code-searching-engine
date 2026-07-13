@@ -147,11 +147,20 @@ class Qwen3Reranker(BaseReranker):
 
     # ── internal ─────────────────────────────────────────────────────────
 
-    def _format_pair(self, query: str, document: str) -> str:
+    def _format_pair(
+        self, query: str, document: str, language: Optional[str] = None,
+    ) -> str:
         """Build the instruction/query/document block (without chat tags)."""
+        language_line = ""
+        if self._language_hint and language:
+            language_line = (
+                f"<Language>: The document is source code written in "
+                f"{language.capitalize()}.\n"
+            )
         return (
             f"<Instruct>: {self._instruction}\n"
             f"<Query>: {query}\n"
+            f"{language_line}"
             f"<Document>: {document}"
         )
 
@@ -202,7 +211,11 @@ class Qwen3Reranker(BaseReranker):
         for start in range(0, len(candidates), bs):
             batch = candidates[start : start + bs]
             pairs = [
-                self._format_pair(query, ent.to_structured_text(include_docstring=self._include_docstring))
+                self._format_pair(
+                    query,
+                    ent.to_structured_text(include_docstring=self._include_docstring),
+                    ent.language,
+                )
                 for ent, _ in batch
             ]
             scores = self._score_batch(pairs)
@@ -254,6 +267,7 @@ def create_reranker(
             torch_dtype=torch_dtype,
             include_docstring=include_docstring,
             language_hint=language_hint,
+            instruction=instruction,
         )
 
     # Fallback: use Qwen3-Reranker for any unrecognised name
