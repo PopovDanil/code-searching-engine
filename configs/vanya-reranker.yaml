@@ -1,0 +1,13 @@
+# Реранкер-эксперимент Вани: ретривер + реранкер.
+# Тот же ретривер (Qwen3-0.6B), топ-100 из него уходят в Qwen3-Reranker.
+# ВАЖНО: reranker_max_length = 2048 (не задушенный 512) — иначе реранкер видит
+# только ~400 токенов кода и почти не переставляет кандидатов.
+embedding_model: "Qwen/Qwen3-Embedding-0.6B"
+reranker_model: "Qwen/Qwen3-Reranker-0.6B"
+enable_reranking: true
+reranker_max_length: 2048
+retrieval_top_k: 100
+device: "cuda"
+embedding_dtype: "float16"
+batch_size: 8            # реранкер при 2048 токенах прожорлив — малый батч
+index_dir: "index_vanya_reranker"

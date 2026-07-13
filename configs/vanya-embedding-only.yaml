@@ -1,0 +1,9 @@
+# Реранкер-эксперимент Вани: ТОЛЬКО ретривер (без реранкера) — базовая линия.
+# Лучший ретривер (Qwen3-0.6B), пул 100.
+embedding_model: "Qwen/Qwen3-Embedding-0.6B"
+enable_reranking: false
+retrieval_top_k: 100
+device: "cuda"
+embedding_dtype: "float16"
+batch_size: 32
+index_dir: "index_vanya_embonly"

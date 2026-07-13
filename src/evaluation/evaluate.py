@@ -154,6 +154,11 @@ def _prepare_evaluation_example(
     if not code.strip() or not documentation.strip():
         return documentation, []
 
+    # CodeSearchNet stores PHP snippets without the opening "<?php" tag, so
+    # tree-sitter-php parses them as inline HTML and finds no functions.
+    if language == "php" and not code.lstrip().startswith("<?"):
+        code = "<?php\n" + code
+
     repository = str(
         example.get("repository_name", example.get("repository", "")) or ""
     )
