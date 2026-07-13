@@ -11,3 +11,4 @@ hybrid_bm25_weight: 1.0
 device: "cuda"
 batch_size: 32
 index_dir: "index_coderankembed_hybrid"
+retrieval_top_k: 100  # пул кандидатов ретривера (для Recall@50/@100)

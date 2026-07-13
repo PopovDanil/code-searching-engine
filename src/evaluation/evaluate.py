@@ -48,6 +48,20 @@ def _ndcg(ranks: Sequence[float], k: int = 10) -> float:
     return dcg / len(ranks) if ranks else 0.0
 
 
+# Recall is reported at several K: low K reflects final-ranking quality,
+# high K (@50/@100) reflects the retriever's real job — getting the answer
+# into the candidate pool that feeds the reranker.
+_RECALL_KS = (1, 5, 10, 20, 50, 100)
+
+
+def _build_metrics(ranks: Sequence[float]) -> Dict[str, float]:
+    """Build the full metric dict for a list of ranks."""
+    metrics = {f"Recall@{k}": _recall_at_k(ranks, k) for k in _RECALL_KS}
+    metrics["MRR"] = _mrr(ranks)
+    metrics["NDCG@10"] = _ndcg(ranks, 10)
+    return metrics
+
+
 # ── Chunk-aware corpus preparation ─────────────────────────────────────
 
 def _blank_entity_docstring(source_code: str, docstring: Optional[str]) -> str:
@@ -184,9 +198,14 @@ def _find_parent_rank(
     results: Sequence[object],
     entity_to_parent: Dict[int, int],
     relevant_parent: int,
-    top_k: int = 10,
+    max_rank: int = 100,
 ) -> float:
-    """Return the rank among unique parents, or infinity for a miss."""
+    """Return the rank of the correct function among unique retrieved parents.
+
+    *max_rank* caps how deep we look (the size of the candidate pool that
+    matters for the retriever, e.g. what would be handed to the reranker).
+    A miss returns infinity.
+    """
     seen_parents = set()
     parent_rank = 0
 
@@ -198,7 +217,7 @@ def _find_parent_rank(
         parent_rank += 1
         if parent == relevant_parent:
             return float(parent_rank)
-        if parent_rank >= top_k:
+        if parent_rank >= max_rank:
             break
     return math.inf
 
@@ -526,7 +545,8 @@ def evaluate_on_codesearchnet(
             ):
                 results = engine.search(query, top_k=config.retrieval_top_k)
                 rank = _find_parent_rank(
-                    results, entity_to_parent, relevant_parent, top_k=10,
+                    results, entity_to_parent, relevant_parent,
+                    max_rank=config.retrieval_top_k,
                 )
                 all_ranks[lang].append(rank)
     else:
@@ -555,7 +575,7 @@ def evaluate_on_codesearchnet(
                     results,
                     combined_entity_to_parent,
                     relevant_parent + lang_parent_offsets[lang],
-                    top_k=10,
+                    max_rank=config.retrieval_top_k,
                 )
                 all_ranks[lang].append(rank)
 
@@ -563,13 +583,7 @@ def evaluate_on_codesearchnet(
     for lang, ranks in all_ranks.items():
         if not ranks:
             continue
-        metrics = {
-            "Recall@1": _recall_at_k(ranks, 1),
-            "Recall@5": _recall_at_k(ranks, 5),
-            "Recall@10": _recall_at_k(ranks, 10),
-            "MRR": _mrr(ranks),
-            "NDCG@10": _ndcg(ranks, 10),
-        }
+        metrics = _build_metrics(ranks)
         all_results[lang] = metrics
         for metric, val in metrics.items():
             logger.info("  %s / %s: %.4f", lang, metric, val)
@@ -577,13 +591,7 @@ def evaluate_on_codesearchnet(
     # ── Compute overall aggregate metrics ──────────────────────────
     combined = [r for ranks in all_ranks.values() for r in ranks]
     if combined:
-        overall = {
-            "Recall@1": _recall_at_k(combined, 1),
-            "Recall@5": _recall_at_k(combined, 5),
-            "Recall@10": _recall_at_k(combined, 10),
-            "MRR": _mrr(combined),
-            "NDCG@10": _ndcg(combined, 10),
-        }
+        overall = _build_metrics(combined)
         all_results["overall"] = overall
         logger.info("  overall / total queries: %d", len(combined))
         for metric, val in overall.items():

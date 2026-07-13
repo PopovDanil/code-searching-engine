@@ -6,3 +6,4 @@ enable_reranking: false
 device: "cuda"
 batch_size: 32
 index_dir: "index_t5_base"
+retrieval_top_k: 100  # пул кандидатов ретривера (для Recall@50/@100)

@@ -12,3 +12,4 @@ device: "cuda"
 embedding_dtype: "float16"
 batch_size: 32
 index_dir: "index_qwen3_hybrid"
+retrieval_top_k: 100  # пул кандидатов ретривера (для Recall@50/@100)

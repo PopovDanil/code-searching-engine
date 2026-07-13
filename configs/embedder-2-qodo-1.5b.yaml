@@ -10,3 +10,4 @@ enable_reranking: false
 device: "cuda"
 batch_size: 8
 index_dir: "index_qodo_15b"
+retrieval_top_k: 100  # пул кандидатов ретривера (для Recall@50/@100)
