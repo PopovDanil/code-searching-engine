@@ -1,0 +1,13 @@
+# Реранкер-эксперимент Вани: ретривер + ЗАДУШЕННЫЙ реранкер (max_length=512).
+# То же, что vanya-reranker.yaml, но reranker_max_length=512 — как дефолт, на
+# котором гоняла Эльвина. Реранкер видит только ~400 токенов кода (хвост функции
+# обрезан). Нужен для прямого сравнения 512 vs 2048 на одинаковых данных.
+embedding_model: "Qwen/Qwen3-Embedding-0.6B"
+reranker_model: "Qwen/Qwen3-Reranker-0.6B"
+enable_reranking: true
+reranker_max_length: 512
+retrieval_top_k: 100
+device: "cuda"
+embedding_dtype: "float16"
+batch_size: 16
+index_dir: "index_vanya_reranker_512"
