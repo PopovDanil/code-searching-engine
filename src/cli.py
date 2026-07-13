@@ -121,6 +121,7 @@ def evaluate(
     max_queries: Optional[int] = typer.Option(None, "--max-queries", help="Max evaluation queries per language"),
     max_dataset_records: Optional[int] = typer.Option(None, "--max-dataset-records", help="Total records across all languages to load into the database"),
     separate_indexes: Optional[bool] = typer.Option(None, "--separate-indexes", "-s", help="Build separate per-language indexes (default: combined)"),
+    seed: Optional[int] = typer.Option(None, "--seed", help="Shuffle the dataset with this seed (for mean +/- std over repeated runs)"),
     config_path: Optional[str] = typer.Option(None, "--config", "-c", help="YAML config file"),
     verbose: bool = typer.Option(False, "--verbose", "-v"),
 ) -> None:
@@ -150,6 +151,7 @@ def evaluate(
         languages=lang_list,
         max_queries=effective_max_queries,
         max_dataset_records=effective_max_dataset_records,
+        seed=seed,
     )
 
     typer.echo("\nEvaluation Results:")

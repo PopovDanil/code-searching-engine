@@ -324,6 +324,7 @@ def evaluate_on_codesearchnet(
     max_queries: Optional[int] = None,
     max_dataset_records: Optional[int] = None,
     split: str = "test",
+    seed: Optional[int] = None,
 ) -> Dict[str, Dict[str, float]]:
     """Evaluate the search system on CodeSearchNet.
 
@@ -427,6 +428,12 @@ def evaluate_on_codesearchnet(
         except Exception:
             logger.exception("Failed to load CodeSearchNet for %s - skipping", lang)
             continue
+
+        # Shuffle so different seeds draw different corpus/query samples.
+        # The eval is otherwise deterministic (same first-N records every run),
+        # so this is what makes repeated runs a real mean ± std, not copies.
+        if seed is not None:
+            ds = ds.shuffle(seed=seed)
 
         corpus_entities: List[CodeEntity] = []
         entity_to_parent: Dict[int, int] = {}
